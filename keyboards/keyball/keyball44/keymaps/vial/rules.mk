@@ -43,4 +43,7 @@ SRC += features/oled_user.c
 SRC += features/arrow_layer.c
 SRC += features/gesture_layer.c
 SRC += features/select_extend.c
-SRC += temp/latency_timer.c
+SRC += features/mouse_speed_smoothing.c
+
+SRC += az1uball/az1uball.c
+SRC += az1uball/az1uball_dpad.c

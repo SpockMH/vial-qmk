@@ -6,9 +6,6 @@
 #include "transactions.h"
 
 
-#include "temp/latency_timer.h"
-
-
 #include "features/rgblight_user.h"
 #include "features/mouse_mode.h"
 #include "features/jis2us.h"
@@ -17,6 +14,10 @@
 #include "features/arrow_layer.h"
 #include "features/gesture_layer.h"
 #include "features/select_extend.h"
+#include "features/mouse_speed_smoothing.h"
+
+#include "az1uball/az1uball.h"
+#include "az1uball/az1uball_dpad.h"
 
 static uint16_t move_timer;
 // ball_tension は arrow_layer.c 内部のテンション管理に統合したため削除
@@ -55,12 +56,24 @@ enum custom_keycodes {
     SELWORD_RIGHT,
     SELLINE_UP,
     SELLINE_DOWN,
+    SPD_THL_UP,
+    SPD_THL_DN,
+    SPD_THU_UP,
+    SPD_THU_DN,
+    SPD_SCL_UP,
+    SPD_SCL_DN,
 };
 
 uint16_t SELECT_WORD_LEFT_KEYCODE  = SELWORD_LEFT;
 uint16_t SELECT_WORD_RIGHT_KEYCODE = SELWORD_RIGHT;
 uint16_t SELECT_LINE_UP_KEYCODE    = SELLINE_UP;
 uint16_t SELECT_LINE_DOWN_KEYCODE  = SELLINE_DOWN;
+uint16_t SPD_THL_UP_KEYCODE = SPD_THL_UP;
+uint16_t SPD_THL_DN_KEYCODE = SPD_THL_DN;
+uint16_t SPD_THU_UP_KEYCODE = SPD_THU_UP;
+uint16_t SPD_THU_DN_KEYCODE = SPD_THU_DN;
+uint16_t SPD_SCL_UP_KEYCODE = SPD_SCL_UP;
+uint16_t SPD_SCL_DN_KEYCODE = SPD_SCL_DN;
 
 
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
@@ -69,35 +82,35 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     KC_ESC , KC_Q   , KC_W   , KC_E   , KC_R   , KC_T   ,                      KC_Y   , KC_U   , KC_I   , KC_O   , KC_P   , KC_EQUAL,
     0x222B , KC_A   , KC_S   , 0x2207 , 0x2409 , KC_G   ,                      KC_H   , KC_J   , 0x440E , KC_L   , 0x422D , KC_ENTER,
     0x7E40 , 0x221D , KC_X   , KC_C   , 0x2819 , KC_B   ,                      KC_N   , KC_M   , KC_COMM, KC_DOT , KC_SLSH, 0x4287  ,
-                      KC_LGUI, KC_LALT, 0x2150 , 0x412C , 0x424F ,     0x312A ,0x324C                            , 0X5261
+             _______,  KC_LGUI, KC_LALT, 0x2150 , 0x412C , 0x424F ,     0x312A ,0x324C   ,_______,  _______,          0X5261, _______
   ),	
 
   [1] = LAYOUT(
     0X43D  , S(KC_1), S(KC_2), S(KC_3), S(KC_4), S(KC_5),                      0x22D  , KC_KP_7, KC_KP_8, KC_KP_9, 0x22E  , 0x2F   ,
     _______, S(KC_6), S(KC_7), 0X2233 , 0x2434 , KC_UP  ,                      0x57   , KC_KP_4, KC_KP_5, KC_KP_6, 0x4456 , _______,
     _______, 0x11D  , 0x11B  , 0x106  , 0x119  , KC_DOWN,                      0x55   , KC_KP_1, KC_KP_2, KC_KP_3, 0x54   , 0x289  ,
-                      _______, _______, _______, _______, _______,    0x2163 , 0x3262                            , _______
+            _______,  _______, _______, _______, _______, _______,    0x2163 , 0x3262  , _______,  _______,        _______, _______
   ),
 
   [2] = LAYOUT(
     _______,KC_F9   , KC_F10 , KC_F11 , KC_F12 , 0x32   ,                      _______, 0x7E41 , KC_UP  , KC_NO  , KC_NO  , _______,
     0x868  ,KC_F5   , KC_F6  , 0x2240 , KC_F8  , 0x4B   ,                      _______, KC_LEFT, KC_DOWN,KC_RIGHT, KC_NO  , _______,
     _______,KC_F1   , KC_F2  , KC_F3  , KC_F4  , 0x4E   ,                      _______, KC_NO  , KC_NO  , KC_NO  , 0x7C01 , _______,
-                      QK_BOOT, 0x7705 , _______, _______, _______,    _______, _______                           , QK_BOOT
+            _______,  QK_BOOT, 0x7705 , _______, _______, _______,    _______, _______  ,_______,_______,           QK_BOOT,_______
   ),
 
   [3] = LAYOUT(
     _______, _______, _______, _______, _______, _______,                      _______, _______, _______, _______, _______, _______,
     _______, _______, _______, _______, _______, _______,                      _______, 0xD1   , _______, 0xD2   , 0x5080, _______,
     _______, _______, _______, _______, _______, _______,                      _______, _______, _______, _______, _______, _______,
-                      _______, _______, _______, _______, _______,    _______, _______                           , _______
+             _______, _______, _______, _______, _______, _______,    _______, _______ , _______,_______,        _______, _______
   ),
 
   [4] = LAYOUT(
     _______, _______, 0x950  , 0x852  , 0x94F  , _______,                      QK_KB_2, 0x424  , _______, 0x425  , _______, _______,
     _______, 0xA50  , 0x850  , 0x851  , 0x84F  , 0xA4F  ,                      0x326  , 0xD1   , _______, 0xD2   , _______, _______,
     _______, _______, 0x32D  , _______, 0x333  , _______,                      QK_KB_3, _______, _______, _______, _______, _______,
-                      _______, _______, _______, _______, _______,    0xD4   , 0xD5                              , QK_KB_1
+            _______, _______, _______, _______, _______, _______,    0xD4   , 0xD5    , _______,  _______,         QK_KB_1, _______
   ),
 };
 
@@ -138,12 +151,14 @@ static void wake_rgb(void) {
 void keyboard_post_init_user(void) {
   transaction_register_rpc(USER_SYNC_KEY_COUNTER, user_sync_a_update_keyCounter_on_other_board);
   transaction_register_rpc(USER_SYNC_LIGHTING, lighting_sync_slave_handler);
+  az1uball_dpad_register_rpc();
   user_config_init();
 
   last_rgb_activity = timer_read32();
   rgblight_init();
 
   process_arrow_layer_reset();
+
 }
 
 void matrix_scan_user(void) {
@@ -155,28 +170,16 @@ void matrix_scan_user(void) {
       transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
     }
   }
+  az1uball_dpad_master_task();
 }
 
-static uint32_t last_oled_update = 0;
-bool oled_stats_dirty = false;
-int32_t latency = 0;
+
 void housekeeping_task_user(void) {
   rgblight_task();
   if (!rgb_is_idle &&
     timer_elapsed32(last_rgb_activity) > RGB_IDLE_TIMEOUT_MS) {
     rgblight_disable();
     rgb_is_idle = true;
-  }
-
-  static int32_t last_time;
-  int32_t dt;
-  if (timer_elapsed32(last_oled_update) >= 1000) {
-    last_oled_update = timer_read32();
-    oled_stats_dirty = true;
-  } else {
-    dt = latency_timer_now_us()-last_time;
-    if (dt > latency) latency = dt;
-    last_time = latency_timer_now_us();
   }
 }
 
@@ -210,19 +213,14 @@ static bool process_user_keycode(uint16_t keycode, keyrecord_t *record) {
         return false;
  
     case MMT_DEC:
-        oled_stats_dirty = true;
         mouse_mode_change_term(false);
-        save_user_config();
         return false;
  
     case MMT_INC:
-        oled_stats_dirty = true;
         mouse_mode_change_term(true);
-        save_user_config();
         return false;
  
     case LIGHT_TOG:
-        rgblight_toggle();
         return false;
  
     case LIGHT_VAI:
@@ -235,12 +233,12 @@ static bool process_user_keycode(uint16_t keycode, keyrecord_t *record) {
  
     case HUE_UP:
         set_hue(get_hue() + 3);
-        save_user_config();
         return false;
     case SPL_TOG:
-        oled_stats_dirty = true;
         splash_mode = !splash_mode;
         return false;
+    case KBC_SAVE:
+        save_user_config();
   }
   return true;
 }
@@ -290,10 +288,11 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
   }
 
   if (!process_cpi_x3(keycode, record)) return false;
+  if (!process_select_extend(keycode, record)) return false;
   if (!process_user_keycode(keycode, record)) return false;
   if (!process_kana_ime(keycode, record)) return false;
   if (!jis2us_process(keycode, record)) return false;
-  if (!process_select_extend(keycode, record)) return false;
+  if (!process_mouse_speed_smoothing(keycode, record)) return false;
   return mouse_mode_process(keycode, record);
 
 }
@@ -381,7 +380,6 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
     bool az_press_edge = az_btn_now && !az_btn_prev;  // 押下エッジ検出
     if (az_press_edge) {
         arrow_key_mode = !arrow_key_mode;  // クリックごとにトグル
-        oled_stats_dirty = true;
         process_gesture_layer_reset();     // モード切替時のテンション誤発火防止
         sync_data.click  = true;
         rgblight_value(2,5,true,false,true);
@@ -391,9 +389,7 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
     }
 
     if (arrow_key_mode) {
-        process_gesture_layer_func(mouse_report.h, -mouse_report.v,
-                          select_extend_line_up,select_extend_line_down,
-                          select_extend_word_left, select_extend_word_right);
+        process_gesture_layer_key(mouse_report.h,-mouse_report.v);
         mouse_report.h = 0;
         mouse_report.v = 0;
     }
@@ -425,6 +421,14 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
     // ここでは一切触れる必要がない。
 
     process_lighting_tracking(&mouse_report, layerscr);
+
+
+    int16_t magnitude = abs(x) + abs(y);
+    mouse_speed_smoothing_push(magnitude);
+    mouse_report.x = mouse_speed_smoothing_apply(x);
+    mouse_report.y = mouse_speed_smoothing_apply(y);
+
+
 
     return mouse_report;
 }
@@ -466,19 +470,6 @@ layer_state_t layer_state_set_user(layer_state_t state)
     call_rgblight(false);
 
   }
-  oled_stats_dirty = true;
   return state;
 }
 
-uint32_t latency2 = 0;
-bool oled_task_user(void){
-
-      uint32_t point1 = latency_timer_now_us();
-
-  oled_task_user_func();
-
-      uint32_t dt     = latency_timer_now_us() - point1;
-    if (dt > latency2) latency2 = dt;
-  return true;
-
-}

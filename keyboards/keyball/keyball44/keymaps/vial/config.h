@@ -39,7 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define KEYBALL_SCROLL_DIV_DEFAULT 4
 #define KEYBALL_SCROLLSNAP_ENABLE 1
 
-#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING
+#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING, USER_SYNC_AZ_DPAD
 
 #define WS2812_DRIVER_REQUIRED
 #define WS2812_DI_PIN       GP0
@@ -52,9 +52,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define OLED_FONT_START 48
 #define OLED_FONT_END 90
 
-
 // #define SPLIT_WPM_ENABLE
-// #define SPLIT_LED_STATE_ENABLEee
+// #define SPLIT_LED_STATE_ENABLE
 // #define SPLIT_LAYER_STATE_ENABLE
 //#define SPLIT_TRANSPORT_MIRROR
 
@@ -62,6 +61,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define DEBOUNCE 5
 #define USB_POLLING_INTERVAL_MS 5
 #define SELECT_SOFT_SERIAL_SPEED 1
+#define EECONFIG_USER_DATA_SIZE 16
 
-#define PICO_FLASH_ASSUME_CORE1_SAFE 1
-#define USE_CORE1
+#define POINTING_DEVICE_HIRES_SCROLL_ENABLE
+#define POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER 120
+#define WHEEL_EXTENDED_REPORT
+#define MOUSEKEY_WHEEL_DELTA 120

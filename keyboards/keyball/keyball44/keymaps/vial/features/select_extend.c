@@ -5,6 +5,7 @@ __attribute__((weak)) uint16_t SELECT_WORD_RIGHT_KEYCODE  = KC_NO;
 __attribute__((weak)) uint16_t SELECT_LINE_UP_KEYCODE     = KC_NO;
 __attribute__((weak)) uint16_t SELECT_LINE_DOWN_KEYCODE   = KC_NO;
 
+
 static bool selection_active = false;
 
 static void tap_ctrl(uint16_t kc) {
@@ -78,6 +79,7 @@ bool process_select_extend(uint16_t keycode, keyrecord_t* record) {
     bool is_word_right = (keycode == SELECT_WORD_RIGHT_KEYCODE);
     bool is_line_up    = (keycode == SELECT_LINE_UP_KEYCODE);
     bool is_line_down  = (keycode == SELECT_LINE_DOWN_KEYCODE);
+
 
     if (is_word_left || is_word_right || is_line_up || is_line_down) {
         if (!record->event.pressed) {

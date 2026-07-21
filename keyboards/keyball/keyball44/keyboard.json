@@ -60,14 +60,18 @@
                 {"label": "R21", "matrix": [6, 1], "x": 11, "y": 2},
                 {"label": "R20", "matrix": [6, 0], "x": 12, "y": 2},
 
+                {"label": "L30", "matrix": [3, 0], "x": 0.5, "y": 3},
                 {"label": "L31", "matrix": [3, 1], "x": 1.5, "y": 3},
                 {"label": "L32", "matrix": [3, 2], "x": 2.5, "y": 3},
                 {"label": "L33", "matrix": [3, 3], "x": 3.5, "y": 3},
                 {"label": "L34", "matrix": [3, 4], "x": 4.5, "y": 3},
                 {"label": "L35", "matrix": [3, 5], "x": 5.5, "y": 3},
-                {"label": "R35", "matrix": [7, 5], "x": 6.5, "y": 3},
-                {"label": "R34", "matrix": [7, 4], "x": 7.5, "y": 3},
-                {"label": "R31", "matrix": [7, 1], "x": 10.5, "y": 3}
+                {"label": "R35", "matrix": [7, 5], "x": 7, "y": 3},
+                {"label": "R34", "matrix": [7, 4], "x": 8, "y": 3},
+                {"label": "R33", "matrix": [7, 3], "x": 9, "y": 3},
+                {"label": "R32", "matrix": [7, 2], "x": 10, "y": 3},
+                {"label": "R31", "matrix": [7, 1], "x": 11, "y": 3},
+                {"label": "R30", "matrix": [7, 0], "x": 12, "y": 3}
             ]
         },
         "LAYOUT_no_ball": {

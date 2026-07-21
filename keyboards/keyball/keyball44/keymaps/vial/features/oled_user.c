@@ -3,13 +3,13 @@
 #include "features/rgblight_user.h"
 #include "features/mouse_mode.h"
 #include "features/jis2us.h"
+#include "features/mouse_speed_smoothing.h"
 
 
 extern bool splash_mode;
 extern bool arrow_key_mode;
-extern int32_t latency;
-extern int32_t latency2;
-extern bool oled_stats_dirty;
+
+
 // ============================================================================
 // 共通ユーティリティ（数値→文字列変換）
 // ============================================================================
@@ -95,56 +95,6 @@ static const char PROGMEM img_num4[] = {
 };
 
 // ============================================================================
-// マスター側：ステータス画面表示
-// ============================================================================
-static void print_lock_key_status(void) {
-    if (oled_stats_dirty){
-        const led_t led_state = host_keyboard_led_state();
-        oled_set_cursor(0, 0);
-        oled_write("J=MOD" , get_m_mode() ? true : false);
-        if (layer_state_is(1)) {
-            oled_write_raw_P(img_num1, sizeof(img_num1));
-        } else if (layer_state_is(2)) {
-            oled_write_raw_P(img_num2, sizeof(img_num2));
-        } else if (layer_state_is(3)) {
-            oled_write_raw_P(img_num3, sizeof(img_num3));
-        } else if (layer_state_is(4)) {
-            oled_write_raw_P(img_num4, sizeof(img_num4));
-        } else {
-            oled_write_raw_P(img_num0, sizeof(img_num0));
-        }
-
-        oled_set_cursor(0, 5);
-        oled_write("CPI", false);
-        oled_write(itoc(keyball_get_cpi(), 2), false);
-        oled_write("JT ", false);
-        oled_write(itoc(mouse_mode_get_term() / 10, 2), false);
-
-        oled_write(led_state.caps_lock   ? "CAP @" : "CAP =", false);
-        oled_write(is_caps_word_on()     ? "CWD @" : "CWD =", false);
-        oled_write(splash_mode ? "SPL @" : "SPL =", false);
-        oled_write(arrow_key_mode ? "ARW @" : "ARW =", false);
-
-        oled_set_cursor(0, 12);
-        if (get_jis2us()) {
-            oled_write("JP ", false);
-            oled_write("US" , true );    
-        } else {
-            oled_write("JP" , true );
-            oled_write(" US" , false);
-        }
-        
-        oled_set_cursor(0, 14);
-        oled_write("CALC ", false);
-        oled_write(itoc(latency, 5), false);
-        //oled_write(itoc(latency2, 5), false);
-        latency = 0;
-        //latency2 = 0;
-        oled_stats_dirty = false;
-    }
-}
-
-// ============================================================================
 // スレーブ側：Luna（キーボードペット）アニメーション＆WPM表示
 // ============================================================================
 
@@ -163,9 +113,6 @@ static uint8_t current_frame = 0;
 static bool isSneaking = false;
 static bool isJumping  = false;
 static bool showedJump = true;
-
-/* 32 * 14 os logos */
-static const char PROGMEM windows_logo[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0xbc, 0xbe, 0xbe, 0x00, 0xbe, 0xbe, 0xbf, 0xbf, 0xbf, 0xbf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x07, 0x0f, 0x0f, 0x00, 0x0f, 0x0f, 0x1f, 0x1f, 0x1f, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 
 /* Luna アニメーション用グラフィックデータ */
@@ -236,20 +183,86 @@ static void render_luna(int LUNA_X, int LUNA_Y) {
     }
 }
 
-// 子機側：WPM（速度）の文字列描画
-static void print_wpm_counter(void) {
-    uint8_t n = get_current_wpm();
-    char    wpm_str[4];
-    oled_set_cursor(0, 14);
-    wpm_str[3] = '\0';
-    wpm_str[2] = '0' + n % 10;
-    wpm_str[1] = '0' + (n /= 10) % 10;
-    wpm_str[0] = '0' + n / 10;
-    oled_write(wpm_str, false);
 
+// ============================================================================
+// マスター側：ステータス画面表示
+// ============================================================================
+static void print_lock_key_status(void) {
+
+    const led_t led_state = host_keyboard_led_state();
+    oled_set_cursor(0, 0);
+    if (layer_state_is(1)) {
+        oled_write_raw_P(img_num1, sizeof(img_num1));
+    } else if (layer_state_is(2)) {
+        oled_write_raw_P(img_num2, sizeof(img_num2));
+    } else if (layer_state_is(3)) {
+        oled_write_raw_P(img_num3, sizeof(img_num3));
+    } else if (layer_state_is(4)) {
+        oled_write_raw_P(img_num4, sizeof(img_num4));
+    } else {
+        oled_write_raw_P(img_num0, sizeof(img_num0));
+    }
+
+    oled_set_cursor(0, 5);
+    if (get_jis2us()) {
+        oled_write("JP ", false);
+        oled_write("US" , true );    
+    } else {
+        oled_write("JP" , true );
+        oled_write(" US" , false);
+    }
+
+    oled_write(led_state.caps_lock   ? "CAP @" : "CAP =", false);
+    oled_write(is_caps_word_on()     ? "CWD @" : "CWD =", false);
+    oled_write(splash_mode ? "SPL @" : "SPL =", false);
+    oled_write(arrow_key_mode ? "ARW @" : "ARW =", false);
+    
+    
+    render_luna(0, 12); // Lunaを画面の下寄りに描画
+    
     oled_set_cursor(0, 15);
-    oled_write(" WPM", false);
+    oled_write("J=MOD" , get_m_mode() ? true : false);
+    
 }
+// ============================================================================
+// マスター側：ステータス画面表示
+// ============================================================================
+static void setting_status(void) {
+
+    oled_set_cursor(0, 0);
+    if (layer_state_is(1)) {
+        oled_write_raw_P(img_num1, sizeof(img_num1));
+    } else if (layer_state_is(2)) {
+        oled_write_raw_P(img_num2, sizeof(img_num2));
+    } else if (layer_state_is(3)) {
+        oled_write_raw_P(img_num3, sizeof(img_num3));
+    } else if (layer_state_is(4)) {
+        oled_write_raw_P(img_num4, sizeof(img_num4));
+    } else {
+        oled_write_raw_P(img_num0, sizeof(img_num0));
+    }
+
+    oled_set_cursor(0, 5);
+    oled_write("CPI", false);
+    oled_write(itoc(keyball_get_cpi(), 2), false);
+    oled_write("JT ", false);
+    oled_write(itoc(mouse_mode_get_term() / 10, 2), false);
+    
+    oled_set_cursor(0, 9);
+    oled_write("M=SMT", false);
+    oled_write("H:", false);
+    oled_write(itoc(mouse_speed_smoothing_get_upper_threshold(), 3), false);
+    oled_write("L:", false);
+    oled_write(itoc(mouse_speed_smoothing_get_lower_threshold(), 3), false);
+    oled_write("S:", false);
+    oled_write(itoc(mouse_speed_smoothing_get_min_scale_pct(), 3), false);
+    oled_write("V:", false);
+    oled_write(itoc(mouse_speed_smoothing_get_current_sum(), 3), false);
+    
+}
+
+
+
 
 // ============================================================================
 // QMK コアコールバック関数
@@ -258,19 +271,28 @@ oled_rotation_t oled_init_user(oled_rotation_t rotation) {
     return OLED_ROTATION_270;
 }
 
-bool oled_task_user_func(void) {
+bool oled_task_user(void) {
+    static bool last_layer = false;
+
     if (is_keyboard_master()) {
-        // 親機側：キー状態とレイヤー、各種設定の表示
-        print_lock_key_status();
-    } else {
-        oled_write_raw_P(windows_logo, sizeof(windows_logo));
-        // 指定時間が経過するごとにアニメーションのコマを進める
-        if (timer_elapsed32(anim_timer) > ANIM_FRAME_DURATION) {
-            anim_timer = timer_read32();
-            render_luna(0, 10); // Lunaを画面の下寄りに描画
+        if (layer_state_is(2)!=last_layer){
+            oled_clear();
         }
-        
-        print_wpm_counter();
+        // 親機側：キー状態とレイヤー、各種設定の表示
+        if (!layer_state_is(2)) {
+            last_layer = false;
+
+            if (timer_elapsed32(anim_timer) > ANIM_FRAME_DURATION) {
+                print_lock_key_status();
+                anim_timer = timer_read32();
+            }
+
+        } else {
+            last_layer = true;
+            if (timer_elapsed32(anim_timer) > ANIM_FRAME_DURATION) {
+                setting_status();
+            }
+        }
     }
     return false;
 }

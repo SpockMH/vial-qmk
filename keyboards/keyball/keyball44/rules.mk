@@ -25,7 +25,6 @@ POINTING_DEVICE_ENABLE = yes
 POINTING_DEVICE_DRIVER = custom
 SRC += drivers/pmw3360/pmw3360.c
 QUANTUM_LIB_SRC += spi_master.c # Optical sensor use SPI to communicate
-SRC += drivers/az1uball/az1uball.c
 
 MOUSEKEY_ENABLE = no
 
@@ -37,7 +36,6 @@ SLEEP_LED_ENABLE = no
 
 OLED_ENABLE = no
 SRC += lib/oledkit/oledkit.c
-
 SRC += lib/keyball/keyball.c
 
 SPACE_CADET_ENABLE = no
