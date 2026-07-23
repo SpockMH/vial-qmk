@@ -245,6 +245,7 @@ static void setting_status(void) {
     oled_set_cursor(0, 5);
     oled_write("CPI", false);
     oled_write(itoc(keyball_get_cpi(), 2), false);
+
     oled_write("JT ", false);
     oled_write(itoc(mouse_mode_get_term() / 10, 2), false);
     

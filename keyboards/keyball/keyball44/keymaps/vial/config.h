@@ -39,7 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define KEYBALL_SCROLL_DIV_DEFAULT 4
 #define KEYBALL_SCROLLSNAP_ENABLE 1
 
-#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING, USER_SYNC_AZ_DPAD
+#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING
 
 #define WS2812_DRIVER_REQUIRED
 #define WS2812_DI_PIN       GP0
@@ -63,7 +63,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SELECT_SOFT_SERIAL_SPEED 1
 #define EECONFIG_USER_DATA_SIZE 16
 
+// --- ハイレゾ・拡張レポートの設定 ---
+#define WHEEL_EXTENDED_REPORT
 #define POINTING_DEVICE_HIRES_SCROLL_ENABLE
 #define POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER 120
-#define WHEEL_EXTENDED_REPORT
-#define MOUSEKEY_WHEEL_DELTA 120
+
+// --- マウスキーの設定（120から1に修正） ---
+#define MOUSEKEY_WHEEL_DELTA 1

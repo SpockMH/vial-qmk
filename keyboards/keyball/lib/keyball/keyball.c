@@ -1,4 +1,5 @@
 /*
+Copyright 2022 @Yowkees
 Copyright 2022 MURAOKA Taro (aka KoRoN, @kaoriya)
 
 This program is free software: you can redistribute it and/or modify
@@ -23,14 +24,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "keyball.h"
 #include "drivers/pmw3360/pmw3360.h"
 
+#ifdef AZ1UBALL_ENABLE
+#    include "drivers/az1uball/az1uball.h"
+#endif
+
 #include <string.h>
 
-const uint8_t CPI_DEFAULT = KEYBALL_CPI_DEFAULT / 100;
-const uint8_t CPI_MAX     = pmw3360_MAXCPI + 1;
-const uint8_t SPI_DEFAULT = KEYBALL_SPI_DEFAULT;
-// SPI is capped so that (SPI * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER) never
-// exceeds the sensor's max CPI, and so it always fits the 7-bit EEPROM field.
-const uint8_t SPI_MAX = MIN(127, ((uint16_t)(pmw3360_MAXCPI + 1) * 100) / POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER);
+const uint8_t CPI_DEFAULT    = KEYBALL_CPI_DEFAULT / 100;
+const uint8_t CPI_MAX        = pmw3360_MAXCPI + 1;
+const uint8_t SCROLL_DIV_MAX = 7;
 
 const uint16_t AML_TIMEOUT_MIN = 100;
 const uint16_t AML_TIMEOUT_MAX = 1000;
@@ -51,12 +53,34 @@ keyball_t keyball = {
     .cpi_value   = 0,
     .cpi_changed = false,
 
-    .spi_value = 0,
-
     .scroll_mode = false,
+    .scroll_div  = 0,
 
     .pressing_keys = { BL, BL, BL, BL, BL, BL, 0 },
 };
+
+#ifdef AZ1UBALL_ENABLE
+// ----------------------------------------------------------------
+// keyball.this_have_ball は「split RPC negotiationで相手にthat_have_ballを
+// 伝えるためのフラグ」として使う一方、公式コードでは同時に
+// 「PMW3360を物理的に持っているか(pmw3360_cpi_set等を呼んでよいか)」の
+// 判定にも使われている。
+//
+// AZ1UBALL構成ではこの2つの意味が両立しない(左手はnegotiation上は
+// true(ボールがある)でありながら、PMW3360を物理的に持たないため
+// pmw3360_cpi_set()を呼んではいけない)。
+//
+// そこで「PMW3360を物理的に持っているか」だけを別フラグとして分離する。
+// keyball.hを変更せずに済むよう、ファイルスコープのstatic変数として持つ。
+// ----------------------------------------------------------------
+static bool pmw3360_physically_present = false;
+#endif
+
+// ----------------------------------------------------------------
+// [デバッグ用] pmw3360_init()の戻り値をOLEDで確認するための一時変数。
+// 動作確認後は削除して構わない。
+// ----------------------------------------------------------------
+static bool debug_pmw3360_init_result = false;
 
 //////////////////////////////////////////////////////////////////////////////
 // Hook points
@@ -77,30 +101,17 @@ static int16_t add16(int16_t a, int16_t b) {
     return r;
 }
 
+// divmod16 divides *v by div, returns the quotient, and assigns the remainder
+// to *v.
+static int16_t divmod16(int16_t *v, int16_t div) {
+    int16_t r = *v / div;
+    *v -= r * div;
+    return r;
+}
+
 // clip2int8 clips an integer fit into int8_t.
 static inline int8_t clip2int8(int16_t v) {
     return (v) < -127 ? -127 : (v) > 127 ? 127 : (int8_t)v;
-}
-
-// spi_to_pmw3360_reg converts an SPI (scroll per inch) value into the
-// register value expected by pmw3360_cpi_set().
-//
-// The PMW3360 register is expressed in units of 100 CPI, offset by one
-// (register n == (n+1)*100 CPI). To make one inch of physical movement
-// produce exactly `spi` HIRES-scroll notches, the sensor's actual CPI is set
-// to (spi * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER), because each raw sensor
-// count is interpreted by the host as 1/POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER
-// of a notch.
-static inline uint8_t spi_to_pmw3360_reg(uint8_t spi) {
-    uint16_t actual_cpi = (uint16_t)spi * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER;
-    uint16_t raw        = actual_cpi / 100;
-    return raw == 0 ? 0 : raw - 1;
-}
-
-// cpi_to_pmw3360_reg converts a keyball CPI value (already in units of 100)
-// into the register value expected by pmw3360_cpi_set().
-static inline uint8_t cpi_to_pmw3360_reg(uint8_t cpi) {
-    return cpi == 0 ? CPI_DEFAULT - 1 : cpi - 1;
 }
 
 #ifdef OLED_ENABLE
@@ -142,9 +153,9 @@ static void add_cpi(int8_t delta) {
     keyball_set_cpi(v < 1 ? 1 : v);
 }
 
-static void add_spi(int8_t delta) {
-    int16_t v = keyball_get_spi() + delta;
-    keyball_set_spi(v < 1 ? 1 : v);
+static void add_scroll_div(int8_t delta) {
+    int8_t v = keyball_get_scroll_div() + delta;
+    keyball_set_scroll_div(v < 1 ? 1 : v);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -159,7 +170,44 @@ void keyboard_pre_init_kb(void) {
 
 void pointing_device_driver_init(void) {
 #if KEYBALL_MODEL != 46
+    // ----------------------------------------------------------------
+    // AZ1UBALLは左手側にのみ物理接続されている。
+    // 右手: 従来通りPMW3360を初期化する。
+    // 左手: PMW3360の代わりにAZ1UBALLを初期化する。
+    //
+    //       this_have_ballはPMW3360用のフラグに見えるが、実際には
+    //       「split RPC negotiation(rpc_get_info)で相手に伝わり、
+    //        相手側のthat_have_ballとして反映される」という重要な役割を持つ。
+    //       housekeeping_task_kbはthat_have_ballがtrueの時だけ
+    //       rpc_get_motion_invoke()/rpc_set_cpi_invoke()を呼ぶため、
+    //       左手をfalseのままにすると右手マスター時にCPI同期とモーション
+    //       RPCが両方止まってしまう(実機で発生した不具合の原因)。
+    //
+    //       そのため左手も this_have_ball = true にする。
+    //       直後にreturnするので、この関数の下側にあるPMW3360専用の
+    //       初期化ブロック(pmw3360_srom_upload/pmw3360_cpi_set)には
+    //       左手では絶対に到達しない。
+    //
+    //       ただし this_have_ball=true 化により、keyball_set_cpi()内の
+    //       "if (this_have_ball) pmw3360_cpi_set(...)" というガードも
+    //       誤って左手で通過してしまう(左手はEEPROM読み込み等で
+    //       keyball_set_cpi()が普通に呼ばれるため)。これを防ぐため、
+    //       「PMW3360を物理的に持っているか」を示す専用フラグ
+    //       pmw3360_physically_present を別途falseのまま維持する。
+    // ----------------------------------------------------------------
+#    ifdef AZ1UBALL_ENABLE
+    if (is_keyboard_left()) {
+        keyball.this_have_ball      = true;  // RPC negotiation用(右手にthat_have_ball=trueを伝える)
+        pmw3360_physically_present  = false; // PMW3360操作(pmw3360_cpi_set等)は禁止のまま
+        az1uball_init();
+        return;
+    }
+#    endif
     keyball.this_have_ball = pmw3360_init();
+    debug_pmw3360_init_result = keyball.this_have_ball; // [デバッグ用]
+#    ifdef AZ1UBALL_ENABLE
+    pmw3360_physically_present = keyball.this_have_ball; // 右手は従来通り連動させる
+#    endif
 #endif
     if (keyball.this_have_ball) {
 #if defined(KEYBALL_PMW3360_UPLOAD_SROM_ID)
@@ -171,7 +219,7 @@ void pointing_device_driver_init(void) {
 #        error Invalid value for KEYBALL_PMW3360_UPLOAD_SROM_ID. Please choose 0x04 or 0x81 or disable it.
 #    endif
 #endif
-        pmw3360_cpi_set(cpi_to_pmw3360_reg(CPI_DEFAULT));
+        pmw3360_cpi_set(CPI_DEFAULT - 1);
     }
 }
 
@@ -203,31 +251,27 @@ __attribute__((weak)) void keyball_on_apply_motion_to_mouse_move(keyball_motion_
 }
 
 __attribute__((weak)) void keyball_on_apply_motion_to_mouse_scroll(keyball_motion_t *m, report_mouse_t *r, bool is_left) {
-    // The physical sensor CPI is already switched to
-    // (SPI * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER) while scroll mode is on
-    // (see keyball_set_scroll_mode()/keyball_set_spi()), so raw motion counts
-    // already correspond 1:1 to the HIRES sub-notch units expected by the
-    // host. No division or clipping is needed; consume the motion as-is.
-    int16_t x = m->x;
-    int16_t y = m->y;
-    m->x       = 0;
-    m->y       = 0;
+    // consume motion of trackball.
+    int16_t div = 1 << (keyball_get_scroll_div() - 1);
+    int16_t x = divmod16(&m->x, div);
+    int16_t y = divmod16(&m->y, div);
 
     // apply to mouse report.
 #if KEYBALL_MODEL == 61 || KEYBALL_MODEL == 39 || KEYBALL_MODEL == 147 || KEYBALL_MODEL == 44
-    r->h = y;
-    r->v = -x;
+    r->h = clip2int8(y);
+    r->v = -clip2int8(x);
     if (is_left) {
         r->h = -r->h;
         r->v = -r->v;
     }
 #elif KEYBALL_MODEL == 46
-    r->h = x;
-    r->v = y;
+    r->h = clip2int8(x);
+    r->v = clip2int8(y);
 #else
 #    error("unknown Keyball model")
 #endif
 
+    if (!is_left) {
     // Scroll snapping
 #if KEYBALL_SCROLLSNAP_ENABLE == 1
     // Old behavior up to 1.3.2)
@@ -237,8 +281,7 @@ __attribute__((weak)) void keyball_on_apply_motion_to_mouse_scroll(keyball_motio
     } else if (TIMER_DIFF_32(now, keyball.scroll_snap_last) >= KEYBALL_SCROLLSNAP_RESET_TIMER) {
         keyball.scroll_snap_tension_h = 0;
     }
-    int16_t threshold = (int16_t)keyball_get_spi() * KEYBALL_SCROLLSNAP_TENSION_THRESHOLD;
-    if (abs(keyball.scroll_snap_tension_h) < threshold) {
+    if (abs(keyball.scroll_snap_tension_h) < KEYBALL_SCROLLSNAP_TENSION_THRESHOLD) {
         keyball.scroll_snap_tension_h += y;
         r->h = 0;
     }
@@ -256,6 +299,7 @@ __attribute__((weak)) void keyball_on_apply_motion_to_mouse_scroll(keyball_motio
             break;
     }
 #endif
+}
 }
 
 static void motion_to_mouse(keyball_motion_t *m, report_mouse_t *r, bool is_left, bool as_scroll) {
@@ -288,21 +332,113 @@ static inline bool should_report(void) {
 }
 
 report_mouse_t pointing_device_driver_get_report(report_mouse_t rep) {
-    // fetch from optical sensor.
-    if (keyball.this_have_ball) {
-        pmw3360_motion_t d = {0};
-        if (pmw3360_motion_burst(&d)) {
-            ATOMIC_BLOCK_FORCEON {
-                keyball.this_motion.x = add16(keyball.this_motion.x, d.x);
-                keyball.this_motion.y = add16(keyball.this_motion.y, d.y);
+    // ----------------------------------------------------------------
+    // AZ1UBALLは左手側にのみ物理接続されている。
+    // 右手: 従来通りPMW3360からモーションを取得してthis_motionに加算する。
+    // 左手: PMW3360の代わりにAZ1UBALLからモーションを取得してthis_motionに加算する。
+    //       this_motionを共有することで、この先のrpc_get_motion_handler/invoke、
+    //       motion_to_mouse()には一切手を加えずにそのまま運んでもらえる。
+    // ----------------------------------------------------------------
+#ifdef AZ1UBALL_ENABLE
+    if (is_keyboard_left()) {
+        int16_t az_x = 0, az_y = 0;
+        bool    az_btn = false;
+        az1uball_get_motion(&az_x, &az_y, &az_btn);
+        // ----------------------------------------------------------------
+        // keyball_on_apply_motion_to_mouse_scroll() は KEYBALL_MODEL==44 の場合
+        // (is_left=true時):
+        //   h = -(this_motion.y)
+        //   v =  (this_motion.x)
+        // という、PMW3360の物理的な取り付け向きに合わせたx/y入れ替え+符号反転を行う。
+        //
+        // az1uballはPMW3360と物理的な取り付け向きが異なるため、この変換を
+        // そのまま受けると軸がズレる(実機で「→操作で上スクロール」として発現した)。
+        //
+        // this_motionへの加算時点で先にx/yを入れ替え、符号を補正しておくことで、
+        // 最終的に h=az_x由来(左右), v=az_y由来(上下) という素直な対応にする。
+        //   目標: h = az_x, v = az_y
+        //   上の変換式に this_motion.x = az_y, this_motion.y = -az_x を入れると
+        //     h = -(-az_x) = az_x  ✓
+        //     v =  (az_y)          ✓
+        //
+        // az_btnは常にthis_motion.btnに直接書き込む(動きの有無に関わらず)。
+        // これによりrpc_get_motion_handler(this_motion構造体をそのまま送る)経由で
+        // 右マスター時もボタン状態が自動的に運ばれるようになる。
+        // ----------------------------------------------------------------
+        ATOMIC_BLOCK_FORCEON {
+            keyball.this_motion.x   = add16(keyball.this_motion.x, az_y);
+            keyball.this_motion.y   = add16(keyball.this_motion.y, -az_x);
+            keyball.this_motion.btn = az_btn;
+        }
+    } else
+#endif
+    {
+        // fetch from optical sensor.
+        if (keyball.this_have_ball) {
+            pmw3360_motion_t d = {0};
+            if (pmw3360_motion_burst(&d)) {
+                ATOMIC_BLOCK_FORCEON {
+                    keyball.this_motion.x = add16(keyball.this_motion.x, d.x);
+                    keyball.this_motion.y = add16(keyball.this_motion.y, d.y);
+                }
             }
         }
     }
     // report mouse event, if keyboard is primary.
     if (is_keyboard_master() && should_report()) {
-        // modify mouse report by PMW3360 motion.
-        motion_to_mouse(&keyball.this_motion, &rep, is_keyboard_left(), keyball.scroll_mode);
-        motion_to_mouse(&keyball.that_motion, &rep, !is_keyboard_left(), keyball.scroll_mode ^ keyball.this_have_ball);
+        // ----------------------------------------------------------------
+        // this_motion / that_motion の scroll_mode 判定。
+        //
+        // ご要望の仕様:
+        //   PMW3360(右手) : scroll_modeオフ→マウス, オン→スクロール(従来通り)
+        //   AZ1UBALL(左手): 常にPMW3360と逆モード
+        //                   (scroll_modeオフ→スクロール, オン→マウス)
+        //
+        // 両方が同じh/v(またはx/y)に書き込もうとすると、motion_to_mouseの
+        // 呼び出し順(this→that)で後勝ちの上書きが発生してしまう
+        // (scroll_modeオン時に両方スクロールにしていたら、az1uball側の
+        //  書き込みでPMW3360側のh/vが上書きされる不具合が発生していた)。
+        // az1uballとPMW3360を常に排他モードにすることで、片方はh/v、
+        // もう片方はx/yに書き込むことになり、上書き競合そのものがなくなる。
+        //
+        // this_motionとthat_motionはそれぞれ「az1uball由来かPMW3360由来か」を
+        // 判定する必要がある。
+        //   this_motionがaz1uball由来  ⇔ 自分が左手 (is_keyboard_left())
+        //   that_motionがaz1uball由来  ⇔ 自分が右手マスター (相手=左手=az1uball)
+        //                                ⇔ !is_keyboard_left()
+        // ----------------------------------------------------------------
+#ifdef AZ1UBALL_ENABLE
+        bool this_as_scroll = is_keyboard_left() ? !keyball.scroll_mode : keyball.scroll_mode;
+        bool that_as_scroll = !is_keyboard_left() ? !keyball.scroll_mode : keyball.scroll_mode;
+#else
+        bool this_as_scroll = keyball.scroll_mode;
+        bool that_as_scroll = keyball.scroll_mode ^ keyball.this_have_ball;
+#endif
+        motion_to_mouse(&keyball.this_motion, &rep, is_keyboard_left(), this_as_scroll);
+        motion_to_mouse(&keyball.that_motion, &rep, !is_keyboard_left(), that_as_scroll);
+
+#ifdef AZ1UBALL_ENABLE
+        // ----------------------------------------------------------------
+        // AZ1UBALLのクリック状態をrep.buttonsに反映する。
+        //
+        // this_motion/that_motionのどちらがaz1uball由来かは、this_as_scroll/
+        // that_as_scrollの判定と同じ考え方(is_keyboard_left())で決まる。
+        //   左手マスター: this_motionがaz1uball由来 → this_motion.btnを見る
+        //   右手マスター: that_motionがaz1uball由来 → that_motion.btnを見る
+        //
+        // 重要: az_btnはレベル値(押されている間ずっとtrue)なので、押されて
+        // いなければ明示的にビットを下ろす(&= ~MOUSE_BTN1)必要がある。
+        // 単純に |= MOUSE_BTN1 だけだと、離した後もビットが立ったままになり
+        // 「押されっぱなし」になる(実機で発生した不具合の原因)。
+        // ----------------------------------------------------------------
+        bool az_btn_now = is_keyboard_left() ? keyball.this_motion.btn : keyball.that_motion.btn;
+        if (az_btn_now) {
+            rep.buttons |= MOUSE_BTN6;
+        } else {
+            rep.buttons &= ~MOUSE_BTN6;
+        }
+#endif
+
         // store mouse report for OLED.
         keyball.last_mouse = rep;
     }
@@ -376,7 +512,22 @@ static void rpc_get_motion_invoke(void) {
     if (transaction_rpc_exec(KEYBALL_GET_MOTION, 0, NULL, sizeof(recv), &recv)) {
         keyball.that_motion.x = add16(keyball.that_motion.x, recv.x);
         keyball.that_motion.y = add16(keyball.that_motion.y, recv.y);
+#ifdef AZ1UBALL_ENABLE
+        // btnはx/yと違い「累積差分」ではなく「現在押されているかどうか」の
+        // レベル値なので、加算ではなく最新の受信値でそのまま上書きする。
+        keyball.that_motion.btn = recv.btn;
+#endif
     }
+#ifdef AZ1UBALL_ENABLE
+    else {
+        // ----------------------------------------------------------------
+        // RPC受信自体が失敗した場合(瞬断など)。x/yは前回値を保持して問題ないが、
+        // btnをそのまま放置すると「押した瞬間に瞬断→離してもtrueのまま残り、
+        // 押されっぱなしになる」危険がある。安全側としてfalseに倒す。
+        // ----------------------------------------------------------------
+        keyball.that_motion.btn = false;
+    }
+#endif
     last_sync = now;
     return;
 }
@@ -416,30 +567,16 @@ const char PROGMEM code_to_name[] = {
 
 void keyball_oled_render_ballinfo(void) {
 #ifdef OLED_ENABLE
-    // Format: `Ball:{mouse x}{mouse y}{mouse h}{mouse v}`
-    //
-    // Output example:
-    //
-    //     Ball: -12  34   0   0
-
-    // 1st line, "Ball" label, mouse x, y, h, and v.
     oled_write_P(PSTR("Ball\xB1"), false);
     oled_write(format_4d(keyball.last_mouse.x), false);
     oled_write(format_4d(keyball.last_mouse.y), false);
     oled_write(format_4d(keyball.last_mouse.h), false);
     oled_write(format_4d(keyball.last_mouse.v), false);
 
-    // 2nd line, empty label and CPI (or SPI while scroll mode is active)
     oled_write_P(PSTR("    \xB1\xBC\xBD"), false);
-    if (keyball.scroll_mode) {
-        oled_write(format_4d(keyball_get_spi()), false);
-        oled_write_P(PSTR("  "), false);
-    } else {
-        oled_write(format_4d(keyball_get_cpi()) + 1, false);
-        oled_write_P(PSTR("00 "), false);
-    }
+    oled_write(format_4d(keyball_get_cpi()) + 1, false);
+    oled_write_P(PSTR("00 "), false);
 
-    // indicate scroll snap mode: "VT" (vertical), "HO" (horizontal), and "SCR" (free)
 #if 1 && KEYBALL_SCROLLSNAP_ENABLE == 2
     switch (keyball_get_scrollsnap_mode()) {
         case KEYBALL_SCROLLSNAP_MODE_VERTICAL:
@@ -455,12 +592,31 @@ void keyball_oled_render_ballinfo(void) {
 #else
     oled_write_P(PSTR("\xBE\xBF"), false);
 #endif
-    // indicate scroll mode: on/off
     if (keyball.scroll_mode) {
         oled_write_P(LFSTR_ON, false);
     } else {
         oled_write_P(LFSTR_OFF, false);
     }
+
+    oled_write_P(PSTR(" \xC0\xC1"), false);
+    oled_write_char('0' + keyball_get_scroll_div(), false);
+
+    // ----------------------------------------------------------------
+    // [デバッグ用] PMW3360初期化結果を表示する。動作確認後は削除して構わない。
+    //
+    // 表示: " P{0/1}T{0/1}"
+    //   P = debug_pmw3360_init_result (pmw3360_init()の生の戻り値)
+    //   T = keyball.this_have_ball    (RPC negotiation用フラグ)
+    //
+    // 右手でP=0なら pmw3360_init() 自体が失敗している
+    // (SPI通信不良・配線・CSピン設定などハードウェア/設定起因の可能性が高い)。
+    // 右手でP=1なのにボールが動かない場合は、motion_burst読み取り側や
+    // motion_to_mouse以降のロジックを疑う。
+    // ----------------------------------------------------------------
+    oled_write_P(PSTR(" P"), false);
+    oled_write_char(debug_pmw3360_init_result ? '1' : '0', false);
+    oled_write_P(PSTR("T"), false);
+    oled_write_char(keyball.this_have_ball ? '1' : '0', false);
 #endif
 }
 
@@ -471,35 +627,17 @@ void keyball_oled_render_ballsubinfo(void) {
 
 void keyball_oled_render_keyinfo(void) {
 #ifdef OLED_ENABLE
-    // Format: `Key :  R{row}  C{col} K{kc} {name}{name}{name}`
-    //
-    // Where `kc` is lower 8 bit of keycode.
-    // Where `name`s are readable labels for pressing keys, valid between 4 and 56.
-    //
-    // `row`, `col`, and `kc` indicates the last processed key,
-    // but `name`s indicate unreleased keys in best effort.
-    //
-    // It is aligned to fit with output of keyball_oled_render_ballinfo().
-    // For example:
-    //
-    //     Key :  R2  C3 K06 abc
-    //     Ball:   0   0   0   0
-
-    // "Key" Label
     oled_write_P(PSTR("Key \xB1"), false);
 
-    // Row and column
     oled_write_char('\xB8', false);
     oled_write_char(to_1x(keyball.last_pos.row), false);
     oled_write_char('\xB9', false);
     oled_write_char(to_1x(keyball.last_pos.col), false);
 
-    // Keycode
     oled_write_P(PSTR("\xBA\xBB"), false);
     oled_write_char(to_1x(keyball.last_kc >> 4), false);
     oled_write_char(to_1x(keyball.last_kc), false);
 
-    // Pressing keys
     oled_write_P(PSTR("  "), false);
     oled_write(keyball.pressing_keys, false);
 #endif
@@ -507,12 +645,6 @@ void keyball_oled_render_keyinfo(void) {
 
 void keyball_oled_render_layerinfo(void) {
 #ifdef OLED_ENABLE
-    // Format: `Layer:{layer state}`
-    //
-    // Output example:
-    //
-    //     Layer:-23------------
-    //
     oled_write_P(PSTR("L\xB6\xB7r\xB1"), false);
     for (uint8_t i = 1; i < 8; i++) {
         oled_write_char((layer_state_is(i) ? to_1x(i) : BL), false);
@@ -547,15 +679,6 @@ void keyball_set_scroll_mode(bool mode) {
         keyball.scroll_mode_changed = timer_read32();
     }
     keyball.scroll_mode = mode;
-
-    // switch the physical sensor CPI between the cursor CPI and the scroll SPI.
-    if (keyball.this_have_ball) {
-        if (mode) {
-            pmw3360_cpi_set(spi_to_pmw3360_reg(keyball_get_spi()));
-        } else {
-            pmw3360_cpi_set(cpi_to_pmw3360_reg(keyball_get_cpi()));
-        }
-    }
 }
 
 keyball_scrollsnap_mode_t keyball_get_scrollsnap_mode(void) {
@@ -572,6 +695,14 @@ void keyball_set_scrollsnap_mode(keyball_scrollsnap_mode_t mode) {
 #endif
 }
 
+uint8_t keyball_get_scroll_div(void) {
+    return keyball.scroll_div == 0 ? KEYBALL_SCROLL_DIV_DEFAULT : keyball.scroll_div;
+}
+
+void keyball_set_scroll_div(uint8_t div) {
+    keyball.scroll_div = div > SCROLL_DIV_MAX ? SCROLL_DIV_MAX : div;
+}
+
 uint8_t keyball_get_cpi(void) {
     return keyball.cpi_value == 0 ? CPI_DEFAULT : keyball.cpi_value;
 }
@@ -582,29 +713,21 @@ void keyball_set_cpi(uint8_t cpi) {
     }
     keyball.cpi_value   = cpi;
     keyball.cpi_changed = true;
-    // Don't touch the physical sensor while scroll mode is active, or it
-    // would clobber the SPI-derived CPI. It gets applied as soon as scroll
-    // mode is turned off (see keyball_set_scroll_mode()).
-    if (keyball.this_have_ball && !keyball.scroll_mode) {
-        pmw3360_cpi_set(cpi_to_pmw3360_reg(cpi));
+    // ----------------------------------------------------------------
+    // pmw3360_cpi_set()はPMW3360を物理的に持っている側でしか呼んではいけない。
+    // AZ1UBALL_ENABLE時はkeyball.this_have_ballがRPC negotiation用に
+    // 左手でもtrueになっているため、代わりにpmw3360_physically_presentで判定する。
+    // AZ1UBALL_ENABLE未定義時は公式のthis_have_ballのままでよい。
+    // ----------------------------------------------------------------
+#ifdef AZ1UBALL_ENABLE
+    if (pmw3360_physically_present) {
+        pmw3360_cpi_set(cpi == 0 ? CPI_DEFAULT - 1 : cpi - 1);
     }
-}
-
-uint8_t keyball_get_spi(void) {
-    return keyball.spi_value == 0 ? SPI_DEFAULT : keyball.spi_value;
-}
-
-void keyball_set_spi(uint8_t spi) {
-    if (spi > SPI_MAX) {
-        spi = SPI_MAX;
+#else
+    if (keyball.this_have_ball) {
+        pmw3360_cpi_set(cpi == 0 ? CPI_DEFAULT - 1 : cpi - 1);
     }
-    keyball.spi_value = spi;
-    // Only push to the physical sensor immediately if scroll mode is
-    // currently active; otherwise it is applied the next time scroll mode is
-    // turned on (see keyball_set_scroll_mode()).
-    if (keyball.this_have_ball && keyball.scroll_mode) {
-        pmw3360_cpi_set(spi_to_pmw3360_reg(keyball_get_spi()));
-    }
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -624,7 +747,7 @@ void keyboard_post_init_kb(void) {
     if (eeconfig_is_enabled()) {
         keyball_config_t c = {.raw = eeconfig_read_kb()};
         keyball_set_cpi(c.cpi);
-        keyball_set_spi(c.spi);
+        keyball_set_scroll_div(c.sdiv);
 #ifdef POINTING_DEVICE_AUTO_MOUSE_ENABLE
         set_auto_mouse_enable(c.amle);
         set_auto_mouse_timeout(c.amlto == 0 ? AUTO_MOUSE_TIME : (c.amlto + 1) * AML_TIMEOUT_QU);
@@ -720,7 +843,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         switch (keycode) {
             case KBC_RST:
                 keyball_set_cpi(0);
-                keyball_set_spi(0);
+                keyball_set_scroll_div(0);
 #ifdef POINTING_DEVICE_AUTO_MOUSE_ENABLE
                 set_auto_mouse_enable(false);
                 set_auto_mouse_timeout(AUTO_MOUSE_TIME);
@@ -729,7 +852,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             case KBC_SAVE: {
                 keyball_config_t c = {
                     .cpi   = keyball.cpi_value,
-                    .spi   = keyball.spi_value,
+                    .sdiv  = keyball.scroll_div,
 #ifdef POINTING_DEVICE_AUTO_MOUSE_ENABLE
                     .amle  = get_auto_mouse_enable(),
                     .amlto = (get_auto_mouse_timeout() / AML_TIMEOUT_QU) - 1,
@@ -758,10 +881,10 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                 keyball_set_scroll_mode(!keyball.scroll_mode);
                 break;
             case SCRL_DVI:
-                add_spi(1);
+                add_scroll_div(1);
                 break;
             case SCRL_DVD:
-                add_spi(-1);
+                add_scroll_div(-1);
                 break;
 
 #if KEYBALL_SCROLLSNAP_ENABLE == 2

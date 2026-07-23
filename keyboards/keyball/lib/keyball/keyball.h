@@ -24,14 +24,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #    define KEYBALL_CPI_DEFAULT 500
 #endif
 
-// SPI: Scroll Per Inch. How many wheel notches should be sent per one inch of
-// physical trackball movement while in scroll mode. This replaces the old
-// KEYBALL_SCROLL_DIV_DEFAULT mechanism entirely: instead of dividing the raw
-// sensor motion in software, the physical sensor CPI itself is switched to
-// (SPI * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER) while scroll mode is on, so
-// raw motion counts can be forwarded to the mouse report unmodified.
-#ifndef KEYBALL_SPI_DEFAULT
-#    define KEYBALL_SPI_DEFAULT 10
+#ifndef KEYBALL_SCROLL_DIV_DEFAULT
+#    define KEYBALL_SCROLL_DIV_DEFAULT 4 // 4: 1/8 (1/2^(n-1))
 #endif
 
 #ifndef KEYBALL_REPORTMOUSE_INTERVAL
@@ -51,10 +45,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #    define KEYBALL_SCROLLSNAP_RESET_TIMER 100
 #endif
 
-// Tension threshold *per SPI unit*. The actual threshold used at runtime is
-// (KEYBALL_SCROLLSNAP_TENSION_THRESHOLD * current SPI value), so that the
-// physical distance of trackball movement needed to break the axis lock stays
-// roughly constant regardless of how SPI is tuned.
 #ifndef KEYBALL_SCROLLSNAP_TENSION_THRESHOLD
 #    define KEYBALL_SCROLLSNAP_TENSION_THRESHOLD 12
 #endif
@@ -112,8 +102,8 @@ enum keyball_keycodes {
     // wheel.
     SCRL_TO  = QK_KB_6, // Toggle scroll mode
     SCRL_MO  = QK_KB_7, // Momentary scroll mode
-    SCRL_DVI = QK_KB_8, // Increment SPI (scroll per inch)
-    SCRL_DVD = QK_KB_9, // Decrement SPI (scroll per inch)
+    SCRL_DVI = QK_KB_8, // Increment scroll divider
+    SCRL_DVD = QK_KB_9, // Decrement scroll divider
 
     SSNP_VRT = QK_KB_13, // Set scroll snap mode as vertical
     SSNP_HOR = QK_KB_14, // Set scroll snap mode as horizontal
@@ -126,14 +116,14 @@ enum keyball_keycodes {
     AML_D50  = QK_KB_12, // Decrement automatic mouse layer timeout
 
     // User customizable 32 keycodes.
-    KEYBALL_SAFE_RANGE = QK_KB_16,
+    KEYBALL_SAFE_RANGE = QK_KB_16,// = QK_USER_0,
 };
 
 typedef union {
     uint32_t raw;
     struct {
         uint8_t cpi : 7;
-        uint8_t spi : 7; // scroll per inch
+        uint8_t sdiv : 3;  // scroll divider
 #ifdef POINTING_DEVICE_AUTO_MOUSE_ENABLE
         uint8_t amle : 1;  // automatic mouse layer enabled
         uint16_t amlto : 5; // automatic mouse layer timeout
@@ -148,13 +138,17 @@ typedef struct {
     uint8_t ballcnt; // count of balls: support only 0 or 1, for now
 } keyball_info_t;
 
-typedef struct {
+typedef struct _keyball_motion_t {
     int16_t x;
     int16_t y;
+#ifdef AZ1UBALL_ENABLE
+    bool    btn;    // AZ1UBALLのクリック状態(レベル値)。
+                    // this_motion/that_motionのRPC同期にそのまま乗せて運ぶために追加。
+#endif
 } keyball_motion_t;
 
+
 typedef uint8_t keyball_cpi_t;
-typedef uint8_t keyball_spi_t;
 
 typedef enum {
     KEYBALL_SCROLLSNAP_MODE_VERTICAL   = 0,
@@ -173,14 +167,13 @@ typedef struct {
     uint8_t cpi_value;
     bool    cpi_changed;
 
-    uint8_t spi_value;
-
     bool     scroll_mode;
     uint32_t scroll_mode_changed;
+    uint8_t  scroll_div;
 
 #if KEYBALL_SCROLLSNAP_ENABLE == 1
     uint32_t scroll_snap_last;
-    int16_t  scroll_snap_tension_h;
+    int8_t   scroll_snap_tension_h;
 #elif KEYBALL_SCROLLSNAP_ENABLE == 2
     keyball_scrollsnap_mode_t scrollsnap_mode;
 #endif
@@ -239,8 +232,7 @@ void keyball_oled_render_layerinfo(void);
 /// keyball_get_scroll_mode gets current scroll mode.
 bool keyball_get_scroll_mode(void);
 
-/// keyball_set_scroll_mode modify scroll mode. Also switches the physical
-/// sensor CPI between the cursor CPI and the scroll SPI accordingly.
+/// keyball_set_scroll_mode modify scroll mode.
 void keyball_set_scroll_mode(bool mode);
 
 /// keyball_get_scrollsnap_mode gets current scroll snap mode.
@@ -248,6 +240,25 @@ keyball_scrollsnap_mode_t keyball_get_scrollsnap_mode(void);
 
 /// keyball_set_scrollsnap_mode change scroll snap mode.
 void keyball_set_scrollsnap_mode(keyball_scrollsnap_mode_t mode);
+
+/// keyball_get_scroll_div gets current scroll divider.
+/// See also keyball_set_scroll_div for the scroll divider's detail.
+uint8_t keyball_get_scroll_div(void);
+
+/// keyball_set_scroll_div changes scroll divider.
+///
+/// The scroll divider is the number that divides the raw value when applying
+/// trackball motion to scrolling.  The CPI value of the trackball is very
+/// high, so if you apply it to scrolling as is, it will scroll too much.
+/// In order to adjust the scroll amount to be appropriate, it is applied after
+/// dividing it by a scroll divider.  The actual denominator is determined by
+/// the following formula:
+///
+///   denominator = 2 ^ (div - 1) ^2
+///
+/// Valid values are between 1 and 7, KEYBALL_SCROLL_DIV_DEFAULT is used when 0
+/// is specified.
+void keyball_set_scroll_div(uint8_t div);
 
 /// keyball_get_cpi gets current CPI of trackball.
 /// The actual CPI value is the returned value multiplied by 100:
@@ -263,21 +274,4 @@ uint8_t keyball_get_cpi(void);
 ///
 /// In addition, if you do not upload SROM, the maximum value will be limited
 /// to 35 (3500CPI).
-///
-/// While scroll mode is active, this does not immediately touch the physical
-/// sensor (it would clobber the SPI-derived setting); it is applied as soon
-/// as scroll mode is turned off.
 void keyball_set_cpi(uint8_t cpi);
-
-/// keyball_get_spi gets current SPI (scroll per inch): how many wheel notches
-/// are sent per inch of physical trackball movement while in scroll mode.
-/// If the stored value is 0, KEYBALL_SPI_DEFAULT is used.
-uint8_t keyball_get_spi(void);
-
-/// keyball_set_spi changes SPI (scroll per inch).
-///
-/// While scroll mode is active, this immediately reprograms the physical
-/// sensor CPI to (spi * POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER) so the raw
-/// motion counts map 1:1 onto HIRES sub-notch units. While scroll mode is
-/// off, it is only stored and applied the next time scroll mode is enabled.
-void keyball_set_spi(uint8_t spi);

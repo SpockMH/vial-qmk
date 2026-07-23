@@ -5,7 +5,6 @@
 #include "split_util.h"
 #include "transactions.h"
 
-
 #include "features/rgblight_user.h"
 #include "features/mouse_mode.h"
 #include "features/jis2us.h"
@@ -15,9 +14,6 @@
 #include "features/gesture_layer.h"
 #include "features/select_extend.h"
 #include "features/mouse_speed_smoothing.h"
-
-#include "az1uball/az1uball.h"
-#include "az1uball/az1uball_dpad.h"
 
 static uint16_t move_timer;
 // ball_tension は arrow_layer.c 内部のテンション管理に統合したため削除
@@ -151,14 +147,12 @@ static void wake_rgb(void) {
 void keyboard_post_init_user(void) {
   transaction_register_rpc(USER_SYNC_KEY_COUNTER, user_sync_a_update_keyCounter_on_other_board);
   transaction_register_rpc(USER_SYNC_LIGHTING, lighting_sync_slave_handler);
-  az1uball_dpad_register_rpc();
   user_config_init();
 
   last_rgb_activity = timer_read32();
   rgblight_init();
 
   process_arrow_layer_reset();
-
 }
 
 void matrix_scan_user(void) {
@@ -170,7 +164,6 @@ void matrix_scan_user(void) {
       transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
     }
   }
-  az1uball_dpad_master_task();
 }
 
 
