@@ -211,7 +211,7 @@ static void print_lock_key_status(void) {
         oled_write("JP" , true );
         oled_write(" US" , false);
     }
-
+    oled_set_cursor(0, 7);
     oled_write(led_state.caps_lock   ? "CAP @" : "CAP =", false);
     oled_write(is_caps_word_on()     ? "CWD @" : "CWD =", false);
     oled_write(splash_mode ? "SPL @" : "SPL =", false);
@@ -243,6 +243,14 @@ static void setting_status(void) {
     }
 
     oled_set_cursor(0, 5);
+    if (get_jis2us()) {
+        oled_write("JP ", false);
+        oled_write("US" , true );    
+    } else {
+        oled_write("JP" , true );
+        oled_write(" US" , false);
+    }
+    oled_set_cursor(0, 6);
     oled_write("CPI", false);
     oled_write(itoc(keyball_get_cpi(), 2), false);
 

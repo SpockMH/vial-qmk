@@ -55,7 +55,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // #define SPLIT_WPM_ENABLE
 // #define SPLIT_LED_STATE_ENABLE
 // #define SPLIT_LAYER_STATE_ENABLE
-//#define SPLIT_TRANSPORT_MIRROR
+// #define SPLIT_TRANSPORT_MIRROR
 
 #undef DEBOUNCE
 #define DEBOUNCE 5
@@ -67,6 +67,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define WHEEL_EXTENDED_REPORT
 #define POINTING_DEVICE_HIRES_SCROLL_ENABLE
 #define POINTING_DEVICE_HIRES_SCROLL_MULTIPLIER 120
-
-// --- マウスキーの設定（120から1に修正） ---
 #define MOUSEKEY_WHEEL_DELTA 1

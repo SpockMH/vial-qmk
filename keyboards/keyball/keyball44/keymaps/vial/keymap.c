@@ -4,16 +4,16 @@
 #include <stdlib.h>
 #include "split_util.h"
 #include "transactions.h"
-
 #include "features/rgblight_user.h"
 #include "features/mouse_mode.h"
 #include "features/jis2us.h"
 #include "features/eeconfig_user.h"
 #include "features/oled_user.h"
 #include "features/arrow_layer.h"
-#include "features/gesture_layer.h"
+#include "features/az1uball_gesture.h"
 #include "features/select_extend.h"
 #include "features/mouse_speed_smoothing.h"
+#include "features/virtual_key.h"
 
 static uint16_t move_timer;
 // ball_tension は arrow_layer.c 内部のテンション管理に統合したため削除
@@ -78,35 +78,35 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     KC_ESC , KC_Q   , KC_W   , KC_E   , KC_R   , KC_T   ,                      KC_Y   , KC_U   , KC_I   , KC_O   , KC_P   , KC_EQUAL,
     0x222B , KC_A   , KC_S   , 0x2207 , 0x2409 , KC_G   ,                      KC_H   , KC_J   , 0x440E , KC_L   , 0x422D , KC_ENTER,
     0x7E40 , 0x221D , KC_X   , KC_C   , 0x2819 , KC_B   ,                      KC_N   , KC_M   , KC_COMM, KC_DOT , KC_SLSH, 0x4287  ,
-             _______,  KC_LGUI, KC_LALT, 0x2150 , 0x412C , 0x424F ,     0x312A ,0x324C   ,_______,  _______,          0X5261, _______
+             _______,  KC_LGUI, KC_LALT, 0x2150 , 0x412C , 0x424F ,,     0x312A ,0x324C   ,_______,  _______,          0X5261, _______
   ),	
 
   [1] = LAYOUT(
     0X43D  , S(KC_1), S(KC_2), S(KC_3), S(KC_4), S(KC_5),                      0x22D  , KC_KP_7, KC_KP_8, KC_KP_9, 0x22E  , 0x2F   ,
     _______, S(KC_6), S(KC_7), 0X2233 , 0x2434 , KC_UP  ,                      0x57   , KC_KP_4, KC_KP_5, KC_KP_6, 0x4456 , _______,
     _______, 0x11D  , 0x11B  , 0x106  , 0x119  , KC_DOWN,                      0x55   , KC_KP_1, KC_KP_2, KC_KP_3, 0x54   , 0x289  ,
-            _______,  _______, _______, _______, _______, _______,    0x2163 , 0x3262  , _______,  _______,        _______, _______
+            _______,  _______, _______, _______, _______, _______,,    0x2163 , 0x3262  , _______,  _______,        _______, _______
   ),
 
   [2] = LAYOUT(
     _______,KC_F9   , KC_F10 , KC_F11 , KC_F12 , 0x32   ,                      _______, 0x7E41 , KC_UP  , KC_NO  , KC_NO  , _______,
     0x868  ,KC_F5   , KC_F6  , 0x2240 , KC_F8  , 0x4B   ,                      _______, KC_LEFT, KC_DOWN,KC_RIGHT, KC_NO  , _______,
     _______,KC_F1   , KC_F2  , KC_F3  , KC_F4  , 0x4E   ,                      _______, KC_NO  , KC_NO  , KC_NO  , 0x7C01 , _______,
-            _______,  QK_BOOT, 0x7705 , _______, _______, _______,    _______, _______  ,_______,_______,           QK_BOOT,_______
+            _______,  QK_BOOT, 0x7705 , _______, _______, _______,,   _______, _______  ,_______,_______,           QK_BOOT,_______
   ),
 
   [3] = LAYOUT(
     _______, _______, _______, _______, _______, _______,                      _______, _______, _______, _______, _______, _______,
     _______, _______, _______, _______, _______, _______,                      _______, 0xD1   , _______, 0xD2   , 0x5080, _______,
     _______, _______, _______, _______, _______, _______,                      _______, _______, _______, _______, _______, _______,
-             _______, _______, _______, _______, _______, _______,    _______, _______ , _______,_______,        _______, _______
+             _______, _______, _______, _______, _______, _______,,    _______, _______ , _______,_______,        _______, _______
   ),
 
   [4] = LAYOUT(
     _______, _______, 0x950  , 0x852  , 0x94F  , _______,                      QK_KB_2, 0x424  , _______, 0x425  , _______, _______,
     _______, 0xA50  , 0x850  , 0x851  , 0x84F  , 0xA4F  ,                      0x326  , 0xD1   , _______, 0xD2   , _______, _______,
     _______, _______, 0x32D  , _______, 0x333  , _______,                      QK_KB_3, _______, _______, _______, _______, _______,
-            _______, _______, _______, _______, _______, _______,    0xD4   , 0xD5    , _______,  _______,         QK_KB_1, _______
+            _______, _______, _______, _______, _______, _______,,    0xD4   , 0xD5    , _______,  _______,         QK_KB_1, _______
   ),
 };
 
@@ -148,7 +148,6 @@ void keyboard_post_init_user(void) {
   transaction_register_rpc(USER_SYNC_KEY_COUNTER, user_sync_a_update_keyCounter_on_other_board);
   transaction_register_rpc(USER_SYNC_LIGHTING, lighting_sync_slave_handler);
   user_config_init();
-
   last_rgb_activity = timer_read32();
   rgblight_init();
 
@@ -227,13 +226,48 @@ static bool process_user_keycode(uint16_t keycode, keyrecord_t *record) {
     case HUE_UP:
         set_hue(get_hue() + 3);
         return false;
+
     case SPL_TOG:
         splash_mode = !splash_mode;
         return false;
+        
     case KBC_SAVE:
         save_user_config();
   }
   return true;
+}
+
+// ユーザー定義キーコードを処理するためのディスパッチ関数。
+// virtual_key.c の fire_virtual_key() から、0x7E00以降のキーコードに対して呼ばれる。
+bool process_user_virtual_keycode(uint16_t keycode) {
+  switch (keycode) {
+    case SELWORD_LEFT:
+      select_extend_word_left();
+      return false;
+    case SELWORD_RIGHT:
+      select_extend_word_right();
+      return false;
+    case SELLINE_UP:
+      select_extend_line_up();
+      return false;
+    case SELLINE_DOWN:
+      select_extend_line_down();
+      return false;
+
+    case QK_TOGGLE_LAYER ... QK_TOGGLE_LAYER_MAX: {
+      // キーコードからレイヤー番号 (0〜31) を抽出
+      uint8_t layer = QK_TOGGLE_LAYER_GET_LAYER(keycode);
+      
+      if (layer_state_is(layer)) {
+        layer_off(layer);
+      } else {
+        layer_on(layer);
+      }
+      return false;
+    }
+    default:
+      return true; // 未対応のキーコードは無視
+  }
 }
 
 // 日本語入力(IME)のかな/英数状態に追従して、変換確定後に自動でIME ON(かな)へ戻す処理。
@@ -269,7 +303,6 @@ static bool process_kana_ime(uint16_t keycode, keyrecord_t *record) {
 bool process_record_user(uint16_t keycode, keyrecord_t *record){  
   //キーイベント情報をSLAVE側に同期
   move_timer = timer_read();
-
   if(record->event.pressed){
     wake_rgb();
     sync_data.key_row = record->event.key.row;
@@ -283,6 +316,9 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
   if (!process_cpi_x3(keycode, record)) return false;
   if (!process_select_extend(keycode, record)) return false;
   if (!process_user_keycode(keycode, record)) return false;
+  if (record->event.pressed){
+    if (!process_user_virtual_keycode(keycode)) return false;
+  }
   if (!process_kana_ime(keycode, record)) return false;
   if (!jis2us_process(keycode, record)) return false;
   if (!process_mouse_speed_smoothing(keycode, record)) return false;
@@ -362,18 +398,19 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
     // M-MODE用のモーション量計算（MOUSE_EXTENDED_REPORTでx/yはint16_t）
     int16_t x = mouse_report.x;
     int16_t y = mouse_report.y;
-    uint8_t abs_move = (uint8_t)MIN(abs(x) + abs(y), 255);
+    uint16_t abs_move = abs(x) + abs(y);
 
     mouse_move(abs_move > 1);
-  
+
+    bool layer1      = layer_state_is(1);
+    bool layer2      = layer_state_is(2);
+    bool scroll_mode = keyball_get_scroll_mode(); 
+
     static bool az_btn_prev = false;
     bool az_btn_now = (mouse_report.buttons & MOUSE_BTN6);
     
-    // pointing_device_task_user内
     bool az_press_edge = az_btn_now && !az_btn_prev;  // 押下エッジ検出
     if (az_press_edge) {
-        arrow_key_mode = !arrow_key_mode;  // クリックごとにトグル
-        process_gesture_layer_reset();     // モード切替時のテンション誤発火防止
         sync_data.click  = true;
         rgblight_value(2,5,true,false,true);
         if(is_keyboard_master()){ 
@@ -381,16 +418,18 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
         }
     }
 
-    if (arrow_key_mode) {
-        process_gesture_layer_key(mouse_report.h,-mouse_report.v);
+    if (scroll_mode) {
+        process_az1uball_gesture(mouse_report.x,mouse_report.y,az_press_edge);
+        mouse_report.x = 0;
+        mouse_report.y = 0;
+    } else {
+        process_az1uball_gesture(mouse_report.h,-mouse_report.v,az_press_edge);
         mouse_report.h = 0;
         mouse_report.v = 0;
     }
+
     az_btn_prev   = az_btn_now;
 
-    bool layer1   = layer_state_is(1);
-    bool layer2   = layer_state_is(2);
-    bool layerscr = layer_state_is(SCR_layer);
     // ----------------------------------------------------------------
     // layer1/2: PMW3360(右手)の動作量を矢印キー/BSDEL・DELに変換する。
     //   layer1 → 左右のみ (KC_BSPC/KC_DEL)、上下は無効(KC_NO)
@@ -408,20 +447,13 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
         return mouse_report;
     }
 
-    // AZ1UBALLの処理はkeyball.c側のpointing_device_driver_get_report内で完結しており、
-    // 左手側のthis_motionにAZ1UBALLのモーションが加算され、公式のrpc_get_motion_handler/
-    // invoke・motion_to_mouse()を経由してこの関数に来た時点でmouse_report.h/vに反映済み。
-    // ここでは一切触れる必要がない。
+    process_lighting_tracking(&mouse_report, scroll_mode);
 
-    process_lighting_tracking(&mouse_report, layerscr);
+    mouse_speed_smoothing_push(abs_move);
+    mouse_report.x = mouse_speed_smoothing_apply(mouse_report.x);
+    mouse_report.y = mouse_speed_smoothing_apply(mouse_report.y);
 
-
-    int16_t magnitude = abs(x) + abs(y);
-    mouse_speed_smoothing_push(magnitude);
-    mouse_report.x = mouse_speed_smoothing_apply(x);
-    mouse_report.y = mouse_speed_smoothing_apply(y);
-
-
+,
 
     return mouse_report;
 }
