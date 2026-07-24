@@ -4,16 +4,17 @@
 #include <stdlib.h>
 #include "split_util.h"
 #include "transactions.h"
-#include "features/rgblight_user.h"
-#include "features/mouse_mode.h"
-#include "features/jis2us.h"
-#include "features/eeconfig_user.h"
-#include "features/oled_user.h"
-#include "features/arrow_layer.h"
-#include "features/az1uball_gesture.h"
-#include "features/select_extend.h"
-#include "features/mouse_speed_smoothing.h"
-#include "features/virtual_key.h"
+#include "features/lighting/rgblight_user.h"
+#include "features/pointing/mouse_mode.h"
+#include "features/input/jis2us.h"
+#include "features/config/eeconfig_user.h"
+#include "features/display/oled_user.h"
+#include "features/pointing/arrow_layer.h"
+#include "features/pointing/az1uball_gesture.h"
+#include "features/input/select_extend.h"
+#include "features/pointing/mouse_speed_smoothing.h"
+#include "features/pointing/virtual_key.h"
+#include "features/lighting/lighting_tracking.h"
 
 static uint16_t move_timer;
 // ball_tension は arrow_layer.c 内部のテンション管理に統合したため削除
@@ -23,16 +24,8 @@ const  uint8_t SCR_layer = 4; //スクロールのレイヤー
 static uint32_t last_rgb_activity = 0;
 static bool     rgb_is_idle       = false;
 
-//左右同期用のデータ構造
-typedef struct _sync_data_t{
-  //キーのrow,col位置情報(ライティング用)
-  uint8_t key_row:3;
-  uint8_t key_col:3;
-  bool scr:1;
-  bool click:1;
-} sync_data_t;
-
-sync_data_t sync_data = {0,0,false,false};
+// 左右同期用のsync_data構造体・ライティング座標追跡ロジックは
+// features/lighting/lighting_tracking.c に切り出し済み。
 
 bool splash_mode=false;
 bool arrow_key_mode = false;
@@ -113,28 +106,16 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 ///////////////////////////////////////////////////////////////////////////////
 //SLAVE側で発生する処理
 ///////////////////////////////////////////////////////////////////////////////
-void user_sync_a_update_keyCounter_on_other_board(uint8_t in_buflen, const void* in_data, uint8_t out_buflen, void* out_data) {
-  const sync_data_t* data = (const sync_data_t*)in_data;
-  rgblight_value(data->key_row,data->key_col,true,data->scr,data->click);
-}
+// 旧 user_sync_a_update_keyCounter_on_other_board は
+// lighting_tracking_rpc_handler() に置き換え(features/lighting/lighting_tracking.c)。
 
 static void lighting_sync_slave_handler(uint8_t in_buflen, const void *in_data,
                                         uint8_t out_buflen, void *out_data) {
     rgblight_update_sync((rgblight_simple_config_t *)in_data);
 }
 
-static void call_rgblight(bool scr){
-  sync_data.scr = scr;
-  sync_data.click = false;
-  //更新された値でライティング更新
-  rgblight_value(sync_data.key_row , sync_data.key_col,true,scr,false);
-  //右側のROW,COL を左側に変換したうえで同期
-  sync_data.key_row = sync_data.key_row - 4;
-  sync_data.key_col = 5 - sync_data.key_col;
-  if(is_keyboard_master()){ 
-    transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
-  }
-}
+// 旧 call_rgblight() は lighting_tracking_trigger() に置き換え
+// (features/lighting/lighting_tracking.c)。座標変換ロジックの重複を解消するため。
 
 static void wake_rgb(void) {
     last_rgb_activity = timer_read32();
@@ -145,11 +126,12 @@ static void wake_rgb(void) {
 }
 
 void keyboard_post_init_user(void) {
-  transaction_register_rpc(USER_SYNC_KEY_COUNTER, user_sync_a_update_keyCounter_on_other_board);
+  transaction_register_rpc(USER_SYNC_KEY_COUNTER, lighting_tracking_rpc_handler);
   transaction_register_rpc(USER_SYNC_LIGHTING, lighting_sync_slave_handler);
   user_config_init();
   last_rgb_activity = timer_read32();
   rgblight_init();
+  lighting_tracking_init();
 
   process_arrow_layer_reset();
 }
@@ -157,11 +139,7 @@ void keyboard_post_init_user(void) {
 void matrix_scan_user(void) {
   bool click = mouse_mode_scan();
   if (click){
-    sync_data.click  = true;
-    rgblight_value(sync_data.key_row , sync_data.key_col,true,false,true);
-    if(is_keyboard_master()){ 
-      transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
-    }
+    lighting_tracking_trigger(false, true);
   }
 }
 
@@ -305,12 +283,8 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
   move_timer = timer_read();
   if(record->event.pressed){
     wake_rgb();
-    sync_data.key_row = record->event.key.row;
-    sync_data.key_col = record->event.key.col;
-    sync_data.click = splash_mode;
-    transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
-    //MASTER側のライティング処理
-    rgblight_value(sync_data.key_row , sync_data.key_col,true,false,splash_mode);
+    lighting_tracking_set_position(record->event.key.row, record->event.key.col);
+    lighting_tracking_trigger(false, splash_mode);
   }
 
   if (!process_cpi_x3(keycode, record)) return false;
@@ -332,66 +306,7 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
 // ---- pointing_device_task_user で使う定数 ----
 #define ARROW_LAYER_TENSION_THRESHOLD 30   // layer1/2で矢印/BSDELキーを発火させ始めるテンション量
 
-#define LIGHTING_TENSION_THRESHOLD    50   // ライティング座標(row/col)を1マス進めるテンション量
-#define LIGHTING_V_DIV                2    // mouse_report.y を垂直テンションに加算する際の除数
-#define LIGHTING_SCROLL_V_MULT        4    // スクロール量(v)を垂直テンションへ変換する係数
-#define LIGHTING_H_DIV                2    // mouse_report.x を水平テンションに加算する際の除数
-
-// ライティング座標(row/col)管理専用のテンション。
-// process_arrow_layer用のテンションはfeatures/arrow_layer.cに移動した。
-static int16_t lighting_tension_v = 0;
-static int16_t lighting_tension_h = 0;
-
-// マウスポインタの動作量をライティング用のRow/Col座標(sync_data)に変換し、
-// 一定テンションを超えたら座標を1マス進めて同期する処理。
-static void process_lighting_tracking(report_mouse_t *mouse_report, bool layerscr) {
-  //ROWが左側だった場合、右側に変更(右側の情報を最後に左に変換し同期)
-  if(sync_data.key_row < 4){
-    sync_data.key_row = sync_data.key_row + 4;
-    sync_data.key_col = 5 - sync_data.key_col;
-  }
-  lighting_tension_h += mouse_report->x / LIGHTING_H_DIV;
-  lighting_tension_v += mouse_report->y / LIGHTING_V_DIV - mouse_report->v * LIGHTING_SCROLL_V_MULT;
- 
-  bool move = false;
-  //テンションが一定以上であれば上下左右のキー座標変更処理
-  if(lighting_tension_h > LIGHTING_TENSION_THRESHOLD){
-    if(sync_data.key_col!=0){
-      sync_data.key_col = sync_data.key_col - 1;
-    }
-    lighting_tension_h = 0;
-    move = true;
-  } else if (lighting_tension_h < -LIGHTING_TENSION_THRESHOLD){
-    if(sync_data.key_col!=5){
-      sync_data.key_col = sync_data.key_col + 1;
-    }
-    lighting_tension_h = 0;
-    move = true;
-  }
-  if(lighting_tension_v > LIGHTING_TENSION_THRESHOLD){
-    if(sync_data.key_row!=6){
-      sync_data.key_row = sync_data.key_row + 1;
-    } else if (layerscr){
-      sync_data.key_row = 4;
-    }
-    lighting_tension_v =0;
-    move = true;
-  } else if (lighting_tension_v < -LIGHTING_TENSION_THRESHOLD){
-    if(sync_data.key_row!=4){
-      sync_data.key_row = sync_data.key_row - 1;
-    } else if (layerscr){
-      sync_data.key_row = 6;
-    }
-    lighting_tension_v =0;
-    move = true;
-  }
-  //キー座標が変更となっていた場合にライティング情報変更及び同期処理
-  if(move){
-    clear_m_buf();
-    call_rgblight(layerscr);
-    move_timer = timer_read();
-  }
-}
+// ライティング座標(row/col)の追跡ロジックは features/lighting/lighting_tracking.c に切り出し済み。
 
 report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
 
@@ -411,11 +326,8 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
     
     bool az_press_edge = az_btn_now && !az_btn_prev;  // 押下エッジ検出
     if (az_press_edge) {
-        sync_data.click  = true;
-        rgblight_value(2,5,true,false,true);
-        if(is_keyboard_master()){ 
-          transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
-        }
+        lighting_tracking_set_position(2, 5);
+        lighting_tracking_trigger(false, true);
     }
 
     if (scroll_mode) {
@@ -447,13 +359,11 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
         return mouse_report;
     }
 
-    process_lighting_tracking(&mouse_report, scroll_mode);
+    lighting_tracking_update(&mouse_report, scroll_mode);
 
     mouse_speed_smoothing_push(abs_move);
     mouse_report.x = mouse_speed_smoothing_apply(mouse_report.x);
     mouse_report.y = mouse_speed_smoothing_apply(mouse_report.y);
-
-,
 
     return mouse_report;
 }
@@ -487,12 +397,11 @@ layer_state_t layer_state_set_user(layer_state_t state)
   } else if (layer== SCR_layer){
     rgblight_mode(RGBLIGHT_MODE_SCROLLMOVE);
     arrow_key_mode = false;
-    call_rgblight(true);
-
+    lighting_tracking_trigger(true, false);
 
   } else {
     rgblight_mode(RGBLIGHT_MODE_MOUSEMOVE);
-    call_rgblight(false);
+    lighting_tracking_trigger(false, false);
 
   }
   return state;

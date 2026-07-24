@@ -35,13 +35,20 @@ DEBOUNCE_TYPE = sym_eager_pk
 
 # ---- ビルド対象の追加ソース ----
 SRC += quantum/color.c
-SRC += features/rgblight_user.c
-SRC += features/mouse_mode.c
-SRC += features/eeconfig_user.c
-SRC += features/jis2us.c
-SRC += features/oled_user.c
-SRC += features/arrow_layer.c
-SRC += features/az1uball_gesture.c
-SRC += features/select_extend.c
-SRC += features/mouse_speed_smoothing.c
-SRC += features/virtual_key.c
+# lighting/ : RGBライティング制御
+SRC += features/lighting/rgblight_user.c
+# pointing/ : トラックボール入力処理(モーション→ジェスチャー/キー変換、速度調整)
+SRC += features/pointing/mouse_mode.c
+SRC += features/pointing/arrow_layer.c
+SRC += features/pointing/az1uball_gesture.c
+SRC += features/pointing/mouse_speed_smoothing.c
+SRC += features/pointing/virtual_key.c
+SRC += features/lighting/lighting_tracking.c
+# input/ : キーコード変換系
+SRC += features/input/jis2us.c
+SRC += features/input/select_extend.c
+# display/ : OLED表示
+SRC += features/display/oled_user.c
+SRC += features/display/oled_7seg.c
+# config/ : EEPROM永続化
+SRC += features/config/eeconfig_user.c

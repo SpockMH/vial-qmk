@@ -48,7 +48,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define LEFT_OFFSET         30
 
 
-#define OLED_FONT_H "features/font.c"
+#define OLED_FONT_H "features/display/font.c"
 #define OLED_FONT_START 48
 #define OLED_FONT_END 90
 

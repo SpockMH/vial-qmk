@@ -1,8 +1,8 @@
 #include "eeconfig_user.h"
 #include "eeconfig.h"
-#include "mouse_mode.h"
-#include "rgblight_user.h"
-#include "features/mouse_speed_smoothing.h"
+#include "features/pointing/mouse_mode.h"
+#include "features/lighting/rgblight_user.h"
+#include "features/pointing/mouse_speed_smoothing.h"
 
 static user_config_t user_config = {
     .speed_lower_threshold = 10,

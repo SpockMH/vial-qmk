@@ -1,5 +1,5 @@
 #include "mouse_speed_smoothing.h"
-#include "eeconfig_user.h"
+#include "features/config/eeconfig_user.h"
 
 __attribute__((weak)) uint16_t SPD_THL_UP_KEYCODE = KC_NO;
 __attribute__((weak)) uint16_t SPD_THL_DN_KEYCODE = KC_NO;
