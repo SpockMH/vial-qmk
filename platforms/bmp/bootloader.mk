@@ -1,0 +1,1 @@
+BOOTLOADER_TYPE = custom

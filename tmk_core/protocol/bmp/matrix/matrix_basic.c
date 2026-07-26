@@ -1,0 +1,209 @@
+
+#include "bmp_matrix.h"
+#include "quantum.h"
+#include "apidef.h"
+
+static void     init_row2col(void);
+static void     init_col2row(void);
+static uint32_t get_device_row(void) {
+    return BMPAPI->app.get_config()->matrix.device_rows;
+};
+static uint32_t get_device_col(void) {
+    return BMPAPI->app.get_config()->matrix.device_cols;
+};
+static uint32_t scan_row2col(matrix_row_t *);
+static uint32_t scan_col2row(matrix_row_t *);
+
+const bmp_matrix_func_t matrix_func_row2col = {init_row2col, get_device_row, get_device_col, scan_row2col};
+const bmp_matrix_func_t matrix_func_col2row = {init_col2row, get_device_row, get_device_col, scan_col2row};
+
+//
+//// col2row matrix
+//
+
+static void unselect_rows(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+
+    for (int i = 0; i < config->matrix.device_rows; i++) {
+        const uint8_t pin = config->matrix.row_pins[i];
+        if (pin != 0) {
+            BMPAPI->gpio.set_pin(pin);
+        }
+    }
+}
+
+static void select_row(uint8_t row) {
+    const uint8_t pin = BMPAPI->app.get_config()->matrix.row_pins[row];
+    if (pin != 0) {
+        BMPAPI->gpio.clear_pin(pin);
+    }
+}
+
+static void unselect_row(uint8_t row) {
+    const uint8_t pin = BMPAPI->app.get_config()->matrix.row_pins[row];
+    if (pin != 0) {
+        BMPAPI->gpio.set_pin(pin);
+    }
+}
+
+static void init_col2row(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+
+    for (int i = 0; i < config->matrix.device_rows; i++) {
+        const uint8_t pin = config->matrix.row_pins[i];
+        if (pin != 0) {
+            gpio_set_pin_output_open_drain(pin);
+            gpio_write_pin_high(pin);
+        }
+    }
+
+    for (int i = 0; i < config->matrix.device_cols; i++) {
+        const uint8_t pin = config->matrix.col_pins[i];
+        if (pin != 0) {
+            gpio_set_pin_input_high(pin);
+        }
+    }
+}
+
+static matrix_row_t read_col_pins(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    uint32_t                pin_num;
+    matrix_row_t            row = 0;
+    for (int i = 0; i < config->matrix.device_cols; i++) {
+        pin_num = config->matrix.col_pins[i];
+        if (pin_num != 0) {
+            row |= (BMPAPI->gpio.read_pin(pin_num) ? 0 : 1) << i;
+        }
+    }
+    return row;
+}
+
+static matrix_row_t read_row(uint8_t row) {
+    select_row(row);
+    matrix_row_t row_state = read_col_pins();
+    unselect_row(row);
+    return row_state;
+}
+
+static uint32_t scan_col2row(matrix_row_t *matrix_raw) {
+    const bmp_api_config_t *config        = BMPAPI->app.get_config();
+    uint8_t                 matrix_offset = config->matrix.is_left_hand ? 0 : config->matrix.rows - get_device_row();
+    uint32_t                change        = 0;
+
+    unselect_rows();
+    for (uint8_t i = 0; i < config->matrix.device_rows; i++) {
+        matrix_row_t row = read_row(i);
+        if (matrix_raw[i + matrix_offset] != row) {
+            matrix_raw[i + matrix_offset] = row;
+            change                        = 1;
+        }
+    }
+
+    return change;
+}
+
+//
+//// row2col matrix
+//
+static void select_col(uint8_t col) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    const uint8_t           pin    = config->matrix.col_pins[col];
+    if (pin != 0) {
+        BMPAPI->gpio.clear_pin(pin);
+    }
+}
+
+static void unselect_col(uint8_t col) {
+    const uint8_t pin = BMPAPI->app.get_config()->matrix.col_pins[col];
+    if (pin != 0) {
+        BMPAPI->gpio.set_pin(pin);
+    }
+}
+
+static void unselect_cols(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    for (int i = 0; i < config->matrix.device_cols; i++) {
+        const uint8_t pin = config->matrix.col_pins[i];
+        if (pin != 0) {
+            BMPAPI->gpio.set_pin(pin);
+        }
+    }
+}
+
+static matrix_col_t read_row_pins(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    matrix_col_t            col    = 0;
+
+    for (int i = 0; i < config->matrix.device_rows; i++) {
+        const uint8_t pin = config->matrix.row_pins[i];
+        if (pin != 0) {
+            col |= ((BMPAPI->gpio.read_pin(pin) ? 0 : 1) << i);
+        }
+    }
+    return col;
+}
+
+static matrix_col_t read_col(uint8_t col) {
+    select_col(col);
+    matrix_col_t col_state = read_row_pins();
+    unselect_col(col);
+    return col_state;
+}
+
+static void init_row2col(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+
+    for (int i = 0; i < config->matrix.device_rows; i++) {
+        const uint8_t pin = config->matrix.row_pins[i];
+        if (pin != 0) {
+            gpio_set_pin_input_high(pin);
+        }
+    }
+
+    for (int i = 0; i < config->matrix.device_cols; i++) {
+        const uint8_t pin = config->matrix.col_pins[i];
+        if (pin != 0) {
+            gpio_set_pin_output_open_drain(pin);
+            gpio_write_pin_high(pin);
+        }
+    }
+}
+
+extern matrix_row_t matrix_row2col[];
+static matrix_row_t get_row2col_matrix(uint8_t row) {
+    return matrix_row2col[row];
+}
+
+static void scan_row2col_matrix(void) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    unselect_cols();
+    for (uint8_t i = 0; i < config->matrix.device_cols; i++) {
+        matrix_col_t col = read_col(i);
+        for (uint8_t j = 0; j < config->matrix.device_rows; j++) {
+            uint8_t bit = (col >> j) & 1;
+            if (bit == 1) {
+                matrix_row2col[j] |= (1 << i);
+            } else {
+                matrix_row2col[j] &= ~(1 << i);
+            }
+        }
+    }
+}
+
+static uint32_t scan_row2col(matrix_row_t *matrix_raw) {
+    const bmp_api_config_t *config = BMPAPI->app.get_config();
+    uint32_t                change = 0;
+
+    uint8_t matrix_offset = config->matrix.is_left_hand ? 0 : config->matrix.rows - get_device_row();
+
+    scan_row2col_matrix();
+    for (uint8_t i = 0; i < config->matrix.device_rows; i++) {
+        matrix_row_t row = get_row2col_matrix(i);
+        if (matrix_raw[i + matrix_offset] != row) {
+            matrix_raw[i + matrix_offset] = row;
+            change                        = 1;
+        }
+    }
+
+    return change;
+}
