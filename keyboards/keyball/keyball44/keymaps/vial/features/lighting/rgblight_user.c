@@ -23,10 +23,33 @@ static rgb_led_t led[RGBLED_NUM];
 static uint32_t last_rgb_activity = 0;
 static bool     rgb_is_idle       = false;
 
-// スプラッシュ演出の強制ON/OFFフラグ(SPL_TOGキーでトグル)。
-// (旧 keymap.c の splash_mode を移設)
-static bool splash_mode = false;
 
+/*  
+//Keyball44配置図
+    L00,L01,L02,L03,L04,L05,    R05,R04,R03,R02,R01,R00, \
+    L10,L11,L12,L13,L14,L15,    R15,R14,R13,R12,R11,R10, \
+    L20,L21,L22,L23,L24,L25,    R25,R24,R23,R22,R21,R20, \
+        L31,L32,L33,L34,L35,    R35,R34,        R31      \
+    ) 
+    { 
+        {   L00,   L01,   L02,   L03,   L04,   L05 }, \
+        {   L10,   L11,   L12,   L13,   L14,   L15 }, \
+        {   L20,   L21,   L22,   L23,   L24,   L25 }, \
+        { KC_NO,   L31,   L32,   L33,   L34,   L35 }, \
+        {   R00,   R01,   R02,   R03,   R04,   R05 }, \
+        {   R10,   R11,   R12,   R13,   R14,   R15 }, \
+        {   R20,   R21,   R22,   R23,   R24,   R25 }, \
+        { KC_NO,   R31, KC_NO, KC_NO,   R34,   R35 }, \
+    }
+*/
+
+/*
+//Keyball44 LED No.(親指は下向きを採用)
+    17, 14, 10, 6, 3, 0,     56, 53, 50, 47, 43, 40, 
+    18, 15, 11, 7, 4, 1,     57, 54, 51, 48, 44, 41, 
+    19, 16, 12, 8, 5, 2,     58, 55, 52, 49, 45, 42, 
+        13,  9,27,28,29,     30, 31,      46     
+*/
 // LEDインデックスマップ
 const uint8_t led_index[MATRIX_ROWS][MATRIX_COLS] = { 
     { 17, 14, 10,  6,  3,  0 },  // Row 0 left 
@@ -185,6 +208,42 @@ static void rgblight_effect_scrollmove(void) {
     rgblight_value(0, 0, false, true, false);
 }
 
+void rgblight_effect_swirl(void) {
+    uint8_t hue;
+    static uint8_t current_hue = 0;
+    uint8_t i, j;
+
+    for (i = 0; i < MATRIX_COLS; i++) {
+        for (j = 0; j < MATRIX_ROWS; j++){
+            hue = (8 * i + current_hue);
+            sethsv_to_array(hue, 255, rgblight_config.val, &led[led_index[j][i]]);
+        }
+    }
+    rgblight_flush();
+    current_hue--;
+}
+
+void rgblight_effect_cross(void) {
+
+    static uint8_t current_hue = 0;
+    uint8_t i, j;
+
+    for (i = 0; i < MATRIX_ROWS; i++) {
+        for (j = 0; j < MATRIX_COLS; j++) {
+            // row と col の和で奇数・偶数を判定
+            if ((i + j + (i == 3 ? 1:0)) % 2 != 0) {
+                sethsv_to_array(current_hue, 255, rgblight_config.val, &led[led_index[i][j]]);
+            } else {
+                sethsv_to_array(current_hue + 128, 255, rgblight_config.val, &led[led_index[i][j]]);
+            }
+        }
+    }
+    
+    underled(true);
+    rgblight_flush();
+    current_hue--;
+}
+
 /* --- 外部公開API関数 --- */
 void rgblight_init(void) {
     lighting_register_rpc_handlers();
@@ -274,14 +333,6 @@ void set_hue(uint8_t value){
     }
 }
 
-bool rgblight_get_splash_mode(void) {
-    return splash_mode;
-}
-
-// SPL_TOGキーから呼ばれる。スプラッシュ演出の強制ON/OFFを切り替える。
-void rgblight_toggle_splash_mode(void) {
-    splash_mode = !splash_mode;
-}
 
 void rgblight_update_sync(rgblight_simple_config_t *master_config) {
     bool is_changed = false;
@@ -345,7 +396,7 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
     // update=falseはrgblight_effect_mousemove/scrollmoveからの毎フレーム
     // アニメーション更新呼び出しなので、ここでは対象にしない
     // (対象にすると毎フレームスプラッシュが発生し続けてしまう)。
-    if (update && splash_mode) splash_trig = true;
+    if (update && get_current_wpm()>40) splash_trig = true;
 
     uint8_t last_index = led_index[last_row][last_col];
 
@@ -442,6 +493,8 @@ void rgblight_task(void) {
             case RGBLIGHT_MODE_ICEWAVE:    interval_time = 16; break;
             case RGBLIGHT_MODE_MOUSEMOVE:  interval_time = 8;  break;
             case RGBLIGHT_MODE_STATIC:     interval_time = 50; break;
+            case RGBLIGHT_MODE_SWIRL:      interval_time = 16; break;
+            case RGBLIGHT_MODE_CROSS:      interval_time = 32; break;
         }
 
         if (timer_elapsed(effect_timer) >= interval_time) {
@@ -452,6 +505,8 @@ void rgblight_task(void) {
                 case RGBLIGHT_MODE_ICEWAVE:    rgblight_effect_icewave();    break;
                 case RGBLIGHT_MODE_MOUSEMOVE:  rgblight_effect_mousemove();  break;
                 case RGBLIGHT_MODE_SCROLLMOVE: rgblight_effect_scrollmove(); break;
+                case RGBLIGHT_MODE_SWIRL:      rgblight_effect_swirl();      break;
+                case RGBLIGHT_MODE_CROSS:      rgblight_effect_cross();      break;
             }
         }
     }

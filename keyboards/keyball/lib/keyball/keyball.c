@@ -204,7 +204,6 @@ void pointing_device_driver_init(void) {
     }
 #    endif
     keyball.this_have_ball = pmw3360_init();
-    debug_pmw3360_init_result = keyball.this_have_ball; // [デバッグ用]
 #    ifdef AZ1UBALL_ENABLE
     pmw3360_physically_present = keyball.this_have_ball; // 右手は従来通り連動させる
 #    endif

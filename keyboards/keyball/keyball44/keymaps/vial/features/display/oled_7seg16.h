@@ -3,9 +3,9 @@
 #include "quantum.h"
 #include "oled_driver.h"
 
-#define OLED_SEG7_WIDTH  32
-#define OLED_SEG7_HEIGHT 32
-#define OLED_SEG7_BYTES  128 // 32 * (32 / 8)
+#define OLED_7SEG16_WIDTH  16
+#define OLED_7SEG16_HEIGHT 16
+#define OLED_7SEG16_BYTES  32 // 32 * (32 / 8)
 
 /**
  * 指定した座標(x, y)に、7セグメント風の文字を描画します。
@@ -14,7 +14,7 @@
  * @param y 表示位置のY座標 (0 ～ OLED_HEIGHT - 32)
  * @param c 描画する文字 ('0'～'9', 'A', 'b', 'C', 'd', 'E', 'F', ' ', '-')
  */
-void oled_write_7seg_char(uint8_t x, uint8_t y, char c);
+void oled_write_7seg16_char(uint8_t x, uint8_t y, char c);
 
 /**
  * 指定した座標(x, y)に、1桁の数値(0～9)を描画します。
@@ -23,4 +23,5 @@ void oled_write_7seg_char(uint8_t x, uint8_t y, char c);
  * @param y 表示位置のY座標
  * @param num 表示する数値 (0～9)
  */
-void oled_write_7seg_num(uint8_t x, uint8_t y, uint8_t num);
+void oled_write_7seg16_num(uint8_t x, uint8_t y, uint8_t num);
+void oled_write_7seg16_num2(uint8_t x, uint8_t y, uint8_t num);

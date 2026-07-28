@@ -66,6 +66,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 void keyboard_post_init_user(void) {
+  oled_status_sync_register();
   user_config_init();
   rgblight_init();
   lighting_tracking_init();
@@ -80,6 +81,7 @@ void matrix_scan_user(void) {
 
 void housekeeping_task_user(void) {
   rgblight_task();
+  oled_status_sync_task();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -92,8 +94,6 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
     rgblight_wake();
     lighting_tracking_set_position(record->event.key.row, record->event.key.col);
     lighting_tracking_trigger(false, false);
-
-    if (!process_user_virtual_keycode(keycode)) return false;
   }
 
   if (!process_cpi_x3(keycode, record)) return false;
@@ -158,13 +158,22 @@ layer_state_t layer_state_set_user(layer_state_t state)
             rgblight_mode(RGBLIGHT_MODE_STATIC);
             break;
 
+        case 3:
+            rgblight_mode(RGBLIGHT_MODE_SWIRL);
+            break;
+
         case 4:
             rgblight_mode(RGBLIGHT_MODE_SCROLLMOVE);
+            lighting_tracking_set_position(5, 4);
             lighting_tracking_trigger(true, false);
             break;
 
+        case 5:
+            rgblight_mode(RGBLIGHT_MODE_CROSS);
+            break;
         default:
             rgblight_mode(RGBLIGHT_MODE_MOUSEMOVE);
+            lighting_tracking_set_position(5, 4);
             lighting_tracking_trigger(false, false);
             break;
     }

@@ -14,7 +14,6 @@ enum custom_keycodes {
     LIGHT_VAI,
     LIGHT_VAD,
     HUE_UP,
-    SPL_TOG,
     SELWORD_LEFT,
     SELWORD_RIGHT,
     SELLINE_UP,

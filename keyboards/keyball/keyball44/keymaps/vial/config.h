@@ -39,7 +39,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define KEYBALL_SCROLL_DIV_DEFAULT 4
 #define KEYBALL_SCROLLSNAP_ENABLE 1
 
-#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING
+#define SPLIT_TRANSACTION_IDS_USER USER_SYNC_KEY_COUNTER, USER_SYNC_LIGHTING, USER_SYNC_OLED_STATUS
 
 #define WS2812_DRIVER_REQUIRED
 #define WS2812_DI_PIN       GP0
@@ -52,7 +52,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define OLED_FONT_START 48
 #define OLED_FONT_END 90
 
-// #define SPLIT_WPM_ENABLE
+#define SPLIT_WPM_ENABLE
 // #define SPLIT_LED_STATE_ENABLE
 // #define SPLIT_LAYER_STATE_ENABLE
 // #define SPLIT_TRANSPORT_MIRROR

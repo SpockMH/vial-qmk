@@ -10,7 +10,9 @@ enum RGBLIGHT_EFFECT_MODE {
     RGBLIGHT_MODE_ICEWAVE,
     RGBLIGHT_MODE_STATIC,
     RGBLIGHT_MODE_MOUSEMOVE,
-    RGBLIGHT_MODE_SCROLLMOVE
+    RGBLIGHT_MODE_SCROLLMOVE,
+    RGBLIGHT_MODE_SWIRL,
+    RGBLIGHT_MODE_CROSS,
 };
 
 // 簡易的な設定保持構造体
@@ -27,11 +29,11 @@ typedef struct {
 #define RGBLIGHT_STATUS_CHANGE_MODE (1 << 0)
 #define RGBLIGHT_STATUS_CHANGE_HSVS (1 << 1)
 
-extern rgblight_simple_config_t rgblight_config;
+extern rgblight_simple_config_t rgblikght_config;
 
 /* API Functions */
 // rgblight_init は内部で lighting_register_rpc_handlers() の呼び出しと
-// アイドル管理状態の初期化もまとめて行う。keyboard_post_init_user からは
+// アイドル管理状klll-lj態の初期化もまとめて行う。keyboard_post_init_user からは
 // これ1つを呼べばよい。
 void rgblight_init(void);
 void rgblight_task(void);
@@ -67,11 +69,3 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
 
 uint8_t get_hue(void);
 void set_hue(uint8_t value);
-
-// スプラッシュ演出の強制ON/OFF状態を取得する(OLED表示用)。
-bool rgblight_get_splash_mode(void);
-
-// SPL_TOGキーから呼ぶ。スプラッシュ演出の強制ON/OFFを切り替える。
-// ON時は rgblight_value() の update=true な呼び出し(キー押下・レイヤー切替・
-// M-MODE/AZ1UBALLクリックなど)で常にスプラッシュが発火するようになる。
-void rgblight_toggle_splash_mode(void);

@@ -52,12 +52,25 @@ bool process_user_keycode(uint16_t keycode, keyrecord_t *record) {
         set_hue(get_hue() + 3);
         return false;
 
-    case SPL_TOG:
-        rgblight_toggle_splash_mode();
-        return false;
-
     case KBC_SAVE:
         save_user_config();
+        return false;
+
+    case SELWORD_LEFT:
+        select_extend_word_left();
+        return false;
+
+    case SELWORD_RIGHT:
+        select_extend_word_right();
+        return false;
+
+    case SELLINE_UP:
+        select_extend_line_up();
+        return false;
+
+    case SELLINE_DOWN:
+        select_extend_line_down();
+        return false;
   }
   return true;
 }
@@ -65,17 +78,20 @@ bool process_user_keycode(uint16_t keycode, keyrecord_t *record) {
 bool process_user_virtual_keycode(uint16_t keycode) {
   switch (keycode) {
     case SELWORD_LEFT:
-      select_extend_word_left();
-      return false;
+        select_extend_word_left();
+        return false;
+
     case SELWORD_RIGHT:
-      select_extend_word_right();
-      return false;
+        select_extend_word_right();
+        return false;
+      
     case SELLINE_UP:
-      select_extend_line_up();
-      return false;
+        select_extend_line_up();
+        return false;
+
     case SELLINE_DOWN:
-      select_extend_line_down();
-      return false;
+        select_extend_line_down();
+        return false;
 
     case QK_TOGGLE_LAYER ... QK_TOGGLE_LAYER_MAX: {
       // キーコードからレイヤー番号 (0〜31) を抽出

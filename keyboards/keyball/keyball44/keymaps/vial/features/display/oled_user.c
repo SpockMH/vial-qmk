@@ -1,21 +1,22 @@
 #include QMK_KEYBOARD_H
+#include <string.h>
 
 #include "features/lighting/rgblight_user.h"
 #include "features/pointing/mouse_mode.h"
 #include "features/key_control/jis2us.h"
 #include "features/pointing/mouse_speed_smoothing.h"
-#include "oled_7seg.h"
-
-extern bool arrow_key_mode;
+#include "oled_7seg32.h"
+#include "oled_7seg16.h"
+#include "transactions.h"
 
 
 // ============================================================================
 // 共通ユーティリティ（数値→文字列変換）
 // ============================================================================
 static const char *itoc(int32_t number, uint8_t width) {
-    static char str[11]; // 最大10桁 + null終端分の余裕
+    static char str[6]; // 最大10桁 + null終端分の余裕
     uint8_t i = 0;
-    if (width > 10) width = 10;
+    if (width > 5) width = 5;
 
     if (number < 0) number = 0; // 念のため負値をガード
 
@@ -40,7 +41,108 @@ static const char *itoc(int32_t number, uint8_t width) {
 }
 
 // ============================================================================
-// スレーブ側：Luna（キーボードペット）アニメーション＆WPM表示
+// 右手OLED状態同期(RPC)
+//
+// 右手側にのみ物理OLEDが実装されている前提。
+//
+// [重要] 送受信ロジックは oled_task_user() の中には置かない。
+// 左手にはOLEDが物理的に無いため、左手が担当するI2Cバスでは oled_init() が
+// ACK無しで失敗し、QMKのOLEDドライバがそのMCU上で oled_task_user() 自体を
+// 呼ばなくなる(実機で確認された挙動)。そのため左手がマスターになると
+// 送信ロジックが一度も実行されず、右手が更新されない不具合が起きていた。
+//
+// housekeeping_task_user() はOLEDの有無に関係なく左右どちらのMCUでも毎回
+// 確実に呼ばれる(rgblight_task()が両側で正しく動いているのと同じ理由)ため、
+// 同期の駆動はそちらに置く。oled_task_user() 側は「今ある状態を描画するだけ」
+// の役割に限定する。
+//
+// 送信は「値が変化していて、かつ最短送信間隔(OLED_SYNC_MIN_INTERVAL_MS)が
+// 経過している」時だけ行う。
+// ============================================================================
+typedef struct {
+    uint8_t layer;
+    bool    jis2us;
+    bool    caps_lock;
+    bool    caps_word;
+    bool    m_mode;
+    uint8_t wpm;
+    uint8_t cpi;
+    uint8_t mouse_term;
+    int16_t speed_upper;
+    int16_t speed_lower;
+    uint8_t speed_min_scale;
+} oled_status_sync_t;
+
+// 右手の描画で実際に参照する「現在の状態」。
+//   - マスター側: housekeeping_task_user() 内で毎回ライブ値を直接書き込む
+//   - スレーブ側: RPCハンドラで受信するたびに書き込む
+// どちらの経路で埋まっても、oled_task_user() 側は同じ変数を読むだけでよい。
+static oled_status_sync_t oled_current_status = {0};
+
+static void oled_status_sync_rpc_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    memcpy(&oled_current_status, in_data, sizeof(oled_current_status));
+}
+
+// keyboard_post_init_user() から無条件で呼ぶこと
+// (左右どちらがマスターになってもハンドラが登録されている必要があるため)
+void oled_status_sync_register(void) {
+    transaction_register_rpc(USER_SYNC_OLED_STATUS, oled_status_sync_rpc_handler);
+}
+
+// マスター側でのみ呼ぶ。現在のライブ状態をまとめて取得する。
+static oled_status_sync_t oled_status_build_local(void) {
+    led_t led_state = host_keyboard_led_state();
+    oled_status_sync_t s = {
+        .layer           = get_highest_layer(layer_state),
+        .jis2us          = get_jis2us(),
+        .caps_lock       = led_state.caps_lock,
+        .caps_word       = is_caps_word_on(),
+        .m_mode          = get_m_mode(),
+        .wpm             = get_current_wpm(),
+        .cpi             = keyball_get_cpi(),
+        .mouse_term      = mouse_mode_get_term(),
+        .speed_upper     = mouse_speed_smoothing_get_upper_threshold(),
+        .speed_lower     = mouse_speed_smoothing_get_lower_threshold(),
+        .speed_min_scale = mouse_speed_smoothing_get_min_scale_pct(),
+    };
+    return s;
+}
+
+// RPC送信の最短間隔。この間隔ごとに「変化していれば送る」判定を行う。
+// 値を大きくするほど同期頻度が下がる(要望により基準を遅めに設定)。
+#ifndef OLED_SYNC_MIN_INTERVAL_MS
+#    define OLED_SYNC_MIN_INTERVAL_MS 500
+#endif
+
+// housekeeping_task_user() から毎回呼ぶこと。OLEDハードウェアの有無に
+// 関係なく、左右どちらのMCUでも確実に実行される点が重要。
+void oled_status_sync_task(void) {
+    if (!is_keyboard_master()) {
+        return; // スレーブ側はRPCハンドラ経由で受け取るだけでよい
+    }
+
+    // マスター自身が右手の場合に備え、描画用の現在値は毎回ライブ更新しておく
+    // (RPC送信の可否とは独立して、自分の画面はいつでも最新であってほしいため)。
+    oled_status_sync_t live = oled_status_build_local();
+    oled_current_status = live;
+
+    static uint32_t last_check = 0;
+    if (timer_elapsed32(last_check) < OLED_SYNC_MIN_INTERVAL_MS) {
+        return;
+    }
+    last_check = timer_read32();
+
+    static oled_status_sync_t last_sent = {0};
+    if (memcmp(&live, &last_sent, sizeof(live)) == 0) {
+        return; // 変化なしなら送らない
+    }
+    if (transaction_rpc_send(USER_SYNC_OLED_STATUS, sizeof(live), &live)) {
+        last_sent = live;
+    }
+}
+
+// ============================================================================
+// 右手OLED：Luna（キーボードペット）アニメーション＆WPM表示
 // ============================================================================
 
 /* settings */
@@ -51,11 +153,10 @@ static const char *itoc(int32_t number, uint8_t width) {
 #define ANIM_FRAME_DURATION 200  // 各フレームの描画間隔（ms）
 #define ANIM_SIZE           96   // 32x22px スプライトのデータサイズ
 
-/* タイマー・フレーム管理情報 */
+/* タイマー・フレーム管理情報(右手ボードのローカル状態。同期対象外) */
 static uint32_t anim_timer   = 0;
 static uint8_t current_frame = 0;
 
-static bool isSneaking = false;
 static bool isJumping  = false;
 static bool showedJump = true;
 
@@ -86,10 +187,9 @@ static const char PROGMEM sneak[2][ANIM_SIZE] = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x40, 0x40, 0x40, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0xa0, 0x20, 0x40, 0x80, 0xc0, 0x20, 0x40, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x41, 0xf0, 0x04, 0x02, 0x02, 0x02, 0x03, 0x02, 0x02, 0x02, 0x04, 0x04, 0x02, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x40, 0x40, 0x55, 0x82, 0x7c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x20, 0x30, 0x0c, 0x02, 0x05, 0x09, 0x12, 0x1e, 0x04, 0x18, 0x10, 0x08, 0x10, 0x20, 0x28, 0x34, 0x06, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
 };
 
-static void render_luna(int LUNA_X, int LUNA_Y) {
-    int current_wpm = get_current_wpm();
-    led_t led_usb_state = host_keyboard_led_state();
-
+// caps_lock/レイヤー(スニーク判定用)/wpm は引数で受け取る。
+// これによりマスター/スレーブどちらの描画経路からも同じ関数を呼べる。
+static void render_luna(int LUNA_X, int LUNA_Y, uint8_t layer, bool caps_lock, uint8_t current_wpm) {
     /* ジャンプ制御 */
     if (isJumping || !showedJump) {
         oled_set_cursor(LUNA_X, LUNA_Y + 2);
@@ -102,20 +202,20 @@ static void render_luna(int LUNA_X, int LUNA_Y) {
         oled_set_cursor(LUNA_X, LUNA_Y);
     }
 
-    /* フレーム切り替え */
+    /* フレーム切り替え(右手ボードのローカル200ms周期で自走) */
     current_frame = (current_frame + 1) % 2;
 
-    if(layer_state_is(1)){
+    if (layer == 1) {
         isJumping  = true;
-        showedJump = false;  
+        showedJump = false;
     } else {
         isJumping = false;
     }
 
-    isSneaking = layer_state_is(4);
+    bool isSneaking = (layer == 4);
 
     /* WPMやCaps等の状態に応じたキャラクター選択 */
-    if (led_usb_state.caps_lock) {
+    if (caps_lock) {
         oled_write_raw_P(bark[current_frame], ANIM_SIZE);
     } else if (isSneaking) {
         oled_write_raw_P(sneak[current_frame], ANIM_SIZE);
@@ -130,71 +230,86 @@ static void render_luna(int LUNA_X, int LUNA_Y) {
 
 
 // ============================================================================
-// マスター側：ステータス画面表示
+// 右手OLED：ステータス画面表示
+// マスター/スレーブどちらの経路からも oled_status_sync_t を渡すだけで
+// 同じ内容を描画できるようにパラメータ化してある。
 // ============================================================================
-static void print_lock_key_status(void) {
+static void print_lock_key_status(const oled_status_sync_t *s) {
 
-    const led_t led_state = host_keyboard_led_state();
-    oled_set_cursor(0, 0);
-    oled_write_7seg_num(0, 0, get_highest_layer(layer_state));
+    oled_write_7seg32_num(0, 0, s->layer);
 
     oled_set_cursor(0, 5);
-    if (get_jis2us()) {
+    if (s->jis2us) {
         oled_write("JP ", false);
-        oled_write("US" , true );    
+        oled_write("US" , true );
     } else {
         oled_write("JP" , true );
         oled_write(" US" , false);
     }
-    oled_set_cursor(0, 7);
-    oled_write(led_state.caps_lock   ? "CAP @" : "CAP =", false);
-    oled_write(is_caps_word_on()     ? "CWD @" : "CWD =", false);
-    oled_write(rgblight_get_splash_mode() ? "SPL @" : "SPL =", false);
+    oled_set_cursor(0, 6);
+    oled_write(s->caps_lock   ? "CAP @" : "CAP =", false);
+    oled_write(s->caps_word   ? "CWD @" : "CWD =", false);
+    oled_write(" WPM ", false);
     
-    
-    render_luna(0, 12); // Lunaを画面の下寄りに描画
-    
-    oled_set_cursor(0, 15);
-    oled_write("J=MOD" , get_m_mode() ? true : false);
-    
-}
-// ============================================================================
-// マスター側：ステータス画面表示
-// ============================================================================
-static void setting_status(void) {
+    oled_write_7seg16_num2(0, 72, s->wpm);
 
+    render_luna(0, 12, s->layer, s->caps_lock, s->wpm); // Lunaを画面の下寄りに描画
+
+    oled_set_cursor(0, 15);
+    oled_write("J=MOD" , s->m_mode);
+}
+
+static void setting_status(const oled_status_sync_t *s) {
     oled_set_cursor(0, 0);
-    oled_write_7seg_num(0, 0, get_highest_layer(layer_state));
+    oled_write_7seg32_num(0, 0, s->layer);
 
     oled_set_cursor(0, 5);
-    if (get_jis2us()) {
+    if (s->jis2us) {
         oled_write("JP ", false);
-        oled_write("US" , true );    
+        oled_write("US" , true );
     } else {
         oled_write("JP" , true );
         oled_write(" US" , false);
     }
     oled_set_cursor(0, 6);
     oled_write("CPI", false);
-    oled_write(itoc(keyball_get_cpi(), 2), false);
+    oled_write(itoc(s->cpi, 2), false);
 
     oled_write("JT ", false);
-    oled_write(itoc(mouse_mode_get_term() / 10, 2), false);
-    
+    oled_write(itoc(s->mouse_term / 10, 2), false);
+
     oled_set_cursor(0, 9);
     oled_write("M=SMT", false);
     oled_write("H:", false);
-    oled_write(itoc(mouse_speed_smoothing_get_upper_threshold(), 3), false);
+    oled_write(itoc(s->speed_upper, 3), false);
     oled_write("L:", false);
-    oled_write(itoc(mouse_speed_smoothing_get_lower_threshold(), 3), false);
+    oled_write(itoc(s->speed_lower, 3), false);
     oled_write("S:", false);
-    oled_write(itoc(mouse_speed_smoothing_get_min_scale_pct(), 3), false);
-    oled_write("V:", false);
-    oled_write(itoc(mouse_speed_smoothing_get_current_sum(), 3), false);
-    
+    oled_write(itoc(s->speed_min_scale, 3), false);
 }
 
+// 渡された状態を、200ms周期(ANIM_FRAME_DURATION)でレイヤー2判定と共に描画する。
+// マスター/スレーブどちらの右手経路からも共通で呼ぶ。
+static void oled_status_render(const oled_status_sync_t *s) {
+    static bool last_setting = false;
+    bool on_setting = (s->layer == 2);
 
+    if (on_setting != last_setting) {
+        oled_clear();
+    }
+    last_setting = on_setting;
+
+    if (timer_elapsed32(anim_timer) <= ANIM_FRAME_DURATION) {
+        return;
+    }
+    anim_timer = timer_read32();
+
+    if (!on_setting) {
+        print_lock_key_status(s);
+    } else {
+        setting_status(s);
+    }
+}
 
 
 // ============================================================================
@@ -205,29 +320,11 @@ oled_rotation_t oled_init_user(oled_rotation_t rotation) {
 }
 
 bool oled_task_user(void) {
-    static bool last_layer = false;
-
-    if (is_keyboard_master()) {
-        if (layer_state_is(2)!=last_layer){
-            oled_clear();
-        }
-        // 親機側：キー状態とレイヤー、各種設定の表示
-        if (!layer_state_is(2)) {
-            last_layer = false;
-
-            if (timer_elapsed32(anim_timer) > ANIM_FRAME_DURATION) {
-                print_lock_key_status();
-                anim_timer = timer_read32();
-            }
-
-        } else {
-            last_layer = true;
-            if (timer_elapsed32(anim_timer) > ANIM_FRAME_DURATION) {
-                setting_status();
-            }
-        }
+    // 右手にのみ物理OLEDがある想定。状態の取得元(自分がマスターかスレーブか)は
+    // oled_current_status がどちらの経路で更新されているかに委ねられており、
+    // ここでは「今の状態を描画するだけ」でよい。
+    if (!is_keyboard_left()) {
+        oled_status_render(&oled_current_status);
     }
     return false;
 }
-
-
