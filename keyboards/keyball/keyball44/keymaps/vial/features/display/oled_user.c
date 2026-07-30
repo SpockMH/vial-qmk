@@ -246,17 +246,18 @@ static void print_lock_key_status(const oled_status_sync_t *s) {
         oled_write("JP" , true );
         oled_write(" US" , false);
     }
-    oled_set_cursor(0, 6);
     oled_write(s->caps_lock   ? "CAP @" : "CAP =", false);
     oled_write(s->caps_word   ? "CWD @" : "CWD =", false);
-    oled_write(" WPM ", false);
+ 
     
-    oled_write_7seg16_num2(0, 72, s->wpm);
+    oled_set_cursor(0, 9);
+    oled_write("J=MOD" , s->m_mode);
 
-    render_luna(0, 12, s->layer, s->caps_lock, s->wpm); // Lunaを画面の下寄りに描画
+    render_luna(0, 11, s->layer, s->caps_lock, s->wpm); // Lunaを画面の下寄りに描画
 
     oled_set_cursor(0, 15);
-    oled_write("J=MOD" , s->m_mode);
+    
+    oled_write_7seg16_num3(0, 112, s->wpm);
 }
 
 static void setting_status(const oled_status_sync_t *s) {

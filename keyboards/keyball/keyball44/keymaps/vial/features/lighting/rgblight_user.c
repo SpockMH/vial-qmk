@@ -77,6 +77,21 @@ static uint8_t last_col = 0;
 #define SPLASH_LEAD_OFFSET 10
 #define SPLASH_TIP_FALLOFF 15
 
+// 花火風(タイピング時)の小さいスプラッシュ用パラメータ。
+// MAX_RADIUSはWPMに応じて可変(下記splash_firework_radius_for_wpm参照)。
+// WAVE_SOLID/WAVE_FADEは通常スプラッシュと同じ値にしてあり、実質的には
+// MAX_RADIUS(広がる範囲の大きさ)だけが花火/通常で異なる形になる。
+#define SPLASH_FIREWORK_MAX_RADIUS (DIST_SCALE * 1.5) // 直径2マス程度の局所的な広がりを狙った目安値(調整可)
+#define SPLASH_FIREWORK_WAVE_SOLID 100
+#define SPLASH_FIREWORK_WAVE_FADE  150
+
+// WPMに応じて花火スプラッシュの最大到達半径を変化させる閾値。
+//   〜SPLASH_FIREWORK_GROW_WPM_LOW                                   : SPLASH_FIREWORK_MAX_RADIUS固定(小さい花火)
+//   SPLASH_FIREWORK_GROW_WPM_LOW〜SPLASH_FIREWORK_GROW_WPM_HIGH      : SPLASH_FIREWORK_MAX_RADIUS→SPLASH_MAX_RADIUSへ線形に拡大
+//   SPLASH_FIREWORK_GROW_WPM_HIGH〜                                  : SPLASH_MAX_RADIUS固定(通常のクリック時スプラッシュと同じ大きさ)
+#define SPLASH_FIREWORK_GROW_WPM_LOW  70
+#define SPLASH_FIREWORK_GROW_WPM_HIGH 400
+
 // Splash プール定数（数を変えるだけで同時発生数を調整可能）
 #define SPLASH_MAX_COUNT 10
 
@@ -85,7 +100,9 @@ typedef struct {
     uint8_t  center_row;
     uint8_t  center_col;
     uint8_t  start_hue;
-    uint16_t radius;     // 各スプラッシュが独自の半径を持つ（uint16_t: SPLASH_MAX_RADIUS=250 を超えられるよう）
+    uint16_t radius;      // 現在の半径(毎フレームSPLASH_SPEEDずつ増加していく値)
+    uint16_t max_radius;  // このスプラッシュの最大到達半径(発火した瞬間のWPMに応じて決定し、以後は固定)
+    bool     firework;    // true: タイピング時の小さい「花火」風スプラッシュ(SPLASH_FIREWORK_WAVE_*を使う)
 } splash_state_t;
 
 static splash_state_t splash_pool[SPLASH_MAX_COUNT];
@@ -388,34 +405,67 @@ static uint8_t splash_alloc(void) {
     return slot;
 }
 
+// WPMに応じて花火スプラッシュの最大到達半径を決める。
+// SPLASH_FIREWORK_GROW_WPM_LOW〜HIGHの間は線形補間し、範囲外は両端の値で固定する。
+static uint16_t splash_firework_radius_for_wpm(uint8_t wpm) {
+    if (wpm <= SPLASH_FIREWORK_GROW_WPM_LOW) {
+        return SPLASH_FIREWORK_MAX_RADIUS;
+    }
+    if (wpm >= SPLASH_FIREWORK_GROW_WPM_HIGH) {
+        return SPLASH_MAX_RADIUS;
+    }
+    uint32_t span  = SPLASH_FIREWORK_GROW_WPM_HIGH - SPLASH_FIREWORK_GROW_WPM_LOW;
+    uint32_t pos   = wpm - SPLASH_FIREWORK_GROW_WPM_LOW;
+    uint32_t delta = (uint32_t)(SPLASH_MAX_RADIUS - SPLASH_FIREWORK_MAX_RADIUS) * pos / span;
+    return (uint16_t)(SPLASH_FIREWORK_MAX_RADIUS + delta);
+}
+
 // トラックボール移動イベント
 void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash_trig) {
-    // スプラッシュモードON時は、実際のキー座標更新イベント(update=true。
-    // キー押下・レイヤー切替・M-MODE/AZ1UBALLクリックなど)に限り、
-    // splash_trigを強制的にtrueへ昇格させる。
-    // update=falseはrgblight_effect_mousemove/scrollmoveからの毎フレーム
-    // アニメーション更新呼び出しなので、ここでは対象にしない
-    // (対象にすると毎フレームスプラッシュが発生し続けてしまう)。
-    if (update && get_current_wpm()>40) splash_trig = true;
-
     uint8_t last_index = led_index[last_row][last_col];
 
-    // ── 新規スプラッシュの登録 ──────────────────────────────────────
+    // splash_trig(M-MODE/AZ1UBALLクリック時の明示的なスプラッシュ)を優先し、
+    // それが無い場合のみ高速タイピング中(WPM>40)の花火風スプラッシュを登録する
+    // (実際のキー座標更新イベント=update=trueに限る。update=falseは
+    //  rgblight_effect_mousemove/scrollmoveからの毎フレームアニメーション更新
+    //  呼び出しなので対象にしない。対象にすると毎フレーム発火し続けてしまう)。
+    //
+    // 花火風の最大到達半径は、発火した瞬間のWPMに応じて
+    // splash_firework_radius_for_wpm()で決定し、そのスプラッシュが消えるまで固定する
+    // (WPM40〜70: 小さい花火のまま固定。70〜100: 通常スプラッシュのサイズへ線形に拡大。
+    //  100以上: 通常のクリック時スプラッシュと同じ大きさ)。
     if (splash_trig) {
-        uint8_t slot          = splash_alloc();
+        uint8_t slot                 = splash_alloc();
         splash_pool[slot].active     = true;
         splash_pool[slot].center_row = row;
         splash_pool[slot].center_col = col;
         splash_pool[slot].start_hue  = hue_value[last_index];
         splash_pool[slot].radius     = 0;
+        splash_pool[slot].firework   = false;
+        splash_pool[slot].max_radius = SPLASH_MAX_RADIUS;
+    } else if (update && get_current_wpm() > 40) {
+        uint8_t slot                 = splash_alloc();
+        splash_pool[slot].active     = true;
+        splash_pool[slot].center_row = row;
+        splash_pool[slot].center_col = col;
+        splash_pool[slot].start_hue  = hue_value[last_index];
+        splash_pool[slot].radius     = 0;
+        splash_pool[slot].firework   = true;
+        splash_pool[slot].max_radius = splash_firework_radius_for_wpm(get_current_wpm());
     }
 
     // ── アクティブ全スプラッシュを処理（配列順 = 後勝ち上書き）──────
     for (uint8_t s = 0; s < SPLASH_MAX_COUNT; s++) {
         if (!splash_pool[s].active) continue;
 
+        // 最大到達半径は発火時に決定済みの値をそのまま使う(毎フレーム再計算しない)
+        uint16_t max_radius = splash_pool[s].max_radius;
+        // firework(タイピング発火)の場合は花火風のWAVE_SOLID/WAVE_FADEを使う
+        uint16_t wave_solid  = splash_pool[s].firework ? SPLASH_FIREWORK_WAVE_SOLID  : WAVE_SOLID;
+        uint16_t wave_fade   = splash_pool[s].firework ? SPLASH_FIREWORK_WAVE_FADE   : WAVE_FADE;
+
         splash_pool[s].radius += SPLASH_SPEED;
-        if (splash_pool[s].radius > SPLASH_MAX_RADIUS) {
+        if (splash_pool[s].radius > max_radius) {
             splash_pool[s].active = false;
             continue;
         }
@@ -438,16 +488,16 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
                     continue;
                 } else if (diff >= 0 && diff <= DIST_SCALE) {
                     v -= diff * SPLASH_TIP_FALLOFF;
-                } else if (diff < 0 && diff >= -WAVE_SOLID) {
+                } else if (diff < 0 && diff >= -wave_solid) {
                     h -= diff >> 1;
-                } else if (diff < -WAVE_SOLID && diff > -WAVE_FADE) {
-                    uint8_t x = (WAVE_FADE - WAVE_SOLID) - (WAVE_FADE - diff);
+                } else if (diff < -wave_solid && diff > -wave_fade) {
+                    uint8_t x = (wave_fade - wave_solid) - (wave_fade - diff);
                     x = ((uint16_t)x * x) >> 4;
                     if (x > 150) x = 150;
                     v -= (150 - x);
                     h -= diff >> 1;
                 } else {
-                    // フェードアウト末尾（diff <= -WAVE_FADE）：完全消灯域も書き込まない
+                    // フェードアウト末尾（diff <= -wave_fade）：完全消灯域も書き込まない
                     continue;
                 }
                 // 影響圏内のみ後勝ちで上書き
@@ -517,4 +567,3 @@ void rgblight_task(void) {
         rgb_is_idle = true;
     }
 }
-

@@ -1,104 +1,86 @@
 #include "oled_7seg16.h"
 #include <string.h>
 
-// --- セグメントビットマップデータ (16x16px = 32 Bytes/seg) ---
-const unsigned char seg7_16_A [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x01, 0x03, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x03, 0x01, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+// --- 11x16pxセグメントビットマップ(ページ単位: [0]=行0-7, [1]=行8-15) ---
+const unsigned char seg7_16_A[] PROGMEM = {
+    0x00, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
-
-const unsigned char seg7_16_B [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x3c, 0x7e, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+const unsigned char seg7_16_B[] PROGMEM = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00
 };
-
-const unsigned char seg7_16_C [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x1e, 0x3f, 0x00, 0x00
+const unsigned char seg7_16_C[] PROGMEM = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0xc0, 0xc0, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0x7f, 0x7f, 0x00
 };
-
-const unsigned char seg7_16_D [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x40, 0x60, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x60, 0x40, 0x00, 0x00, 0x00
+const unsigned char seg7_16_D[] PROGMEM = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x00
 };
-
-const unsigned char seg7_16_E [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x3f, 0x1e, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+const unsigned char seg7_16_E[] PROGMEM = {
+    0x00, 0xc0, 0xc0, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x7f, 0x7f, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
-
-const unsigned char seg7_16_F [] PROGMEM = {
-	0x00, 0x00, 0x7e, 0x3c, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+const unsigned char seg7_16_F[] PROGMEM = {
+    0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
-
-const unsigned char seg7_16_G [] PROGMEM = {
-	0x00, 0x00, 0x00, 0x80, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0x80, 0x00, 0x00, 0x00, 
-	0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00
+const unsigned char seg7_16_G[] PROGMEM = {
+    0x00, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0x00,
+    0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00
 };
-
 
 const unsigned char* const seg7_16_allArray[7] PROGMEM = {
     seg7_16_A, seg7_16_B, seg7_16_C, seg7_16_D, seg7_16_E, seg7_16_F, seg7_16_G
 };
 
-// セグメント定義
-#define SEG16_A (1 << 0)
-#define SEG16_B (1 << 1)
-#define SEG16_C (1 << 2)
-#define SEG16_D (1 << 3)
-#define SEG16_E (1 << 4)
-#define SEG16_F (1 << 5)
-#define SEG16_G (1 << 6)
+#define SEG_A (1 << 0)
+#define SEG_B (1 << 1)
+#define SEG_C (1 << 2)
+#define SEG_D (1 << 3)
+#define SEG_E (1 << 4)
+#define SEG_F (1 << 5)
+#define SEG_G (1 << 6)
 
 static uint8_t get_seg_mask(char c) {
     switch (c) {
-        case '0': return SEG16_A | SEG16_B | SEG16_C | SEG16_D | SEG16_E | SEG16_F;
-        case '1': return SEG16_B | SEG16_C;
-        case '2': return SEG16_A | SEG16_B | SEG16_G | SEG16_E | SEG16_D;
-        case '3': return SEG16_A | SEG16_B | SEG16_G | SEG16_C | SEG16_D;
-        case '4': return SEG16_F | SEG16_G | SEG16_B | SEG16_C;
-        case '5': return SEG16_A | SEG16_F | SEG16_G | SEG16_C | SEG16_D;
-        case '6': return SEG16_A | SEG16_F | SEG16_E | SEG16_D | SEG16_C | SEG16_G;
-        case '7': return SEG16_A | SEG16_B | SEG16_C;
-        case '8': return SEG16_A | SEG16_B | SEG16_C | SEG16_D | SEG16_E | SEG16_F | SEG16_G;
-        case '9': return SEG16_A | SEG16_B | SEG16_C | SEG16_D | SEG16_F | SEG16_G;
-        case 'A':
-        case 'a': return SEG16_A | SEG16_B | SEG16_C | SEG16_E | SEG16_F | SEG16_G;
-        case 'B':
-        case 'b': return SEG16_F | SEG16_E | SEG16_G | SEG16_C | SEG16_D;
-        case 'C':
-        case 'c': return SEG16_A | SEG16_F | SEG16_E | SEG16_D;
-        case 'D':
-        case 'd': return SEG16_B | SEG16_G | SEG16_E | SEG16_D | SEG16_C;
-        case 'E':
-        case 'e': return SEG16_A | SEG16_F | SEG16_G | SEG16_E | SEG16_D;
-        case 'F':
-        case 'f': return SEG16_A | SEG16_F | SEG16_G | SEG16_E;
-        case '-': return SEG16_G;
+        case '0': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F;
+        case '1': return SEG_B | SEG_C;
+        case '2': return SEG_A | SEG_B | SEG_G | SEG_E | SEG_D;
+        case '3': return SEG_A | SEG_B | SEG_G | SEG_C | SEG_D;
+        case '4': return SEG_F | SEG_G | SEG_B | SEG_C;
+        case '5': return SEG_A | SEG_F | SEG_G | SEG_C | SEG_D;
+        case '6': return SEG_A | SEG_F | SEG_E | SEG_D | SEG_C | SEG_G;
+        case '7': return SEG_A | SEG_B | SEG_C;
+        case '8': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G;
+        case '9': return SEG_A | SEG_B | SEG_C | SEG_D | SEG_F | SEG_G;
+        case '-': return SEG_G;
         default:  return 0x00;
     }
 }
-
-void oled_write_7seg16_char(uint8_t x, uint8_t y, char c) {
+// 1桁分(11x16px)のビットマップをOR合成してbufferへ書き込む
+static void compose_digit(char c, char *buffer) {
     uint8_t mask = get_seg_mask(c);
-    char buffer[OLED_7SEG16_BYTES];
-    memset(buffer, 0, sizeof(buffer));
+    memset(buffer, 0, OLED_SEG7_16_BYTES);
 
-    // マスクに従って各セグメントデータをOR合成
     for (uint8_t i = 0; i < 7; i++) {
         if (mask & (1 << i)) {
             const unsigned char* seg_ptr = (const unsigned char*)pgm_read_ptr(&seg7_16_allArray[i]);
-            for (uint16_t b = 0; b < OLED_7SEG16_BYTES; b++) {
+            for (uint16_t b = 0; b < OLED_SEG7_16_BYTES; b++) {
                 buffer[b] |= pgm_read_byte(&seg_ptr[b]);
             }
         }
     }
+}
 
-    // OLED画面の指定位置へ書き込み
-    for (uint8_t page = 0; page < 2; page++) {
+void oled_write_7seg16_char(uint8_t x, uint8_t y, char c) {
+    char buffer[OLED_SEG7_16_BYTES];
+    compose_digit(c, buffer);
+
+    for (uint8_t page = 0; page < OLED_SEG7_16_PAGES; page++) {
         oled_set_cursor(x / 6, (y / 8) + page);
-        oled_write_raw(&buffer[page * OLED_7SEG16_WIDTH], OLED_7SEG16_WIDTH);
+        oled_write_raw(&buffer[page * OLED_SEG7_16_WIDTH], OLED_SEG7_16_WIDTH);
     }
 }
 
@@ -109,69 +91,41 @@ void oled_write_7seg16_num(uint8_t x, uint8_t y, uint8_t num) {
     oled_write_7seg16_char(x, y, '0' + num);
 }
 
-void oled_write_7seg16_num2(uint8_t x, uint8_t y, uint8_t num) {
-    // 0～99に制限
-    if (num > 99) {
-        num = 99;
+void oled_write_7seg16_num3(uint8_t x, uint8_t y, uint16_t num) {
+    if (num > 999) {
+        num = 999;
     }
 
-    // 十の位と一の位を取得
-    uint8_t tens = num / 10;
-    uint8_t ones = num % 10;
+    char digits[3] = {
+        (char)('0' + (num / 100) % 10),
+        (char)('0' + (num / 10)  % 10),
+        (char)('0' + num % 10),
+    };
 
-    // 32×16ピクセル
-    // 1ページ = 横32バイト
-    // 16ピクセル = 2ページ
-    char buffer[64];
+    char combined[OLED_SEG7_16_3DIGIT_WIDTH * OLED_SEG7_16_PAGES];
+    memset(combined, 0, sizeof(combined));
 
-    memset(buffer, 0, sizeof(buffer));
+    char digit_buf[OLED_SEG7_16_BYTES];
 
-    // 各数字のセグメントマスクを取得
-    uint8_t tens_mask = get_seg_mask('0' + tens);
-    uint8_t ones_mask = get_seg_mask('0' + ones);
+    for (uint8_t d = 0; d < 3; d++) {
+        compose_digit(digits[d], digit_buf);
 
-    // 7セグメントを合成
-    for (uint8_t i = 0; i < 7; i++) {
+        uint8_t x_offset = d * OLED_SEG7_16_WIDTH; // 0, 11, 22
 
-        const uint8_t *seg_ptr =
-            (const uint8_t *)pgm_read_ptr(
-                &seg7_16_allArray[i]
-            );
-
-        // 十の位を左側へ合成
-        if (tens_mask & (1 << i)) {
-            for (uint8_t b = 0; b < OLED_7SEG16_BYTES; b++) {
-
-                uint8_t page = b / OLED_7SEG16_WIDTH;
-                uint8_t col  = b % OLED_7SEG16_WIDTH;
-
-                // 左側：横0～15
-                buffer[
-                    page * 32 + col
-                ] |= pgm_read_byte(&seg_ptr[b]);
-            }
-        }
-
-        // 一の位を右側へ合成
-        if (ones_mask & (1 << i)) {
-            for (uint8_t b = 0; b < OLED_7SEG16_BYTES; b++) {
-
-                uint8_t page = b / OLED_7SEG16_WIDTH;
-                uint8_t col  = b % OLED_7SEG16_WIDTH;
-
-                // 右側：横16～31
-                buffer[
-                    page * 32 + 16 + col
-                ] |= pgm_read_byte(&seg_ptr[b]);
+        for (uint8_t page = 0; page < OLED_SEG7_16_PAGES; page++) {
+            for (uint8_t col = 0; col < OLED_SEG7_16_WIDTH; col++) {
+                uint8_t gx = x_offset + col;
+                if (gx >= OLED_SEG7_16_3DIGIT_WIDTH) {
+                    continue; // 33px目(3桁目の右余白)は切り捨て
+                }
+                combined[page * OLED_SEG7_16_3DIGIT_WIDTH + gx] |=
+                    digit_buf[page * OLED_SEG7_16_WIDTH + col];
             }
         }
     }
 
-    // 32×16を一度にOLEDへ書き込む
-    for (uint8_t page = 0; page < 2; page++) {
-
+    for (uint8_t page = 0; page < OLED_SEG7_16_PAGES; page++) {
         oled_set_cursor(x / 6, (y / 8) + page);
-
-        oled_write_raw(&buffer[page * 32], 32);
+        oled_write_raw(&combined[page * OLED_SEG7_16_3DIGIT_WIDTH], OLED_SEG7_16_3DIGIT_WIDTH);
     }
 }
