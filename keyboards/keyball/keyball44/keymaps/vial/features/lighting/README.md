@@ -25,6 +25,14 @@ Keyball44の60個のWS2812 LED(左右分割・合計)を制御する独自RGBエ
 
 モード切替は`keymap.c`の`layer_state_set_user()`から`rgblight_mode()`を呼ぶことで行われる。
 
+## led_index（物理キー位置→LED配列インデックスの対応表）
+
+`rgblight_user.c`内の`led_index[MATRIX_ROWS][LED_MATRIX_COLS]`は、物理キーの行列位置(row/col)から対応するLED配列(`led[RGBLED_NUM]`)のインデックスを引くための対応表。スプラッシュ/花火風エフェクトの距離計算(`rgblight_value()`)、`RGBLIGHT_MODE_SWIRL`、`RGBLIGHT_MODE_CROSS`がこれを参照する。LEDが存在しないマス(サムクラスタの一部など)には`59`(no-LEDセンチネル。距離計算では明示的に`continue`でスキップされる)が入っている。
+
+列数は`MATRIX_COLS`(=7)ではなく`LED_MATRIX_COLS`(=`MATRIX_COLS - 1`=6)。物理キーはcol0〜5の6列のみで、col6はaz1uball仮想キーコードをvialのキーマップ配列に割り当てるためだけに追加された列であり、対応する物理キー・LEDは存在しない。`led_index`関連の全ループ(このファイル内、上記3箇所)は必ず`LED_MATRIX_COLS`を使うこと。
+
+過去に`led_index`を`MATRIX_COLS`(7列)で宣言しつつ各行の初期化子を6個しか書いていなかったことがあり、C言語の仕様で足りない列(col6)が暗黙に`0`埋めされていた。この結果、本来存在しないcol6のマスがled0(row0,col5の実LED)と混線し、無関係なキー操作でled0が意図しないタイミングで光る不具合が発生していた。現在は配列サイズとループ境界を`LED_MATRIX_COLS`に統一することで、col6のマスがそもそも計算対象に入らないようにしてある。
+
 ## 左右同期の仕組み
 
 マスター(通常は右手)からスレーブへ`transaction_rpc_send(USER_SYNC_LIGHTING, ...)`で`rgblight_simple_config_t`(enable/mode/hue/sat/val)を送信する。スレーブ側では、本ディレクトリの`rgblight_user.c`にある`rgblight_sync_rpc_handler()`がRPCを受け取り、`rgblight_update_sync()`に委譲する。変化があった項目のみ即座にLEDへ反映する。

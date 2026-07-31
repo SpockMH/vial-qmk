@@ -25,6 +25,8 @@ VIALRGB_ENABLE = no
 OLED_ENABLE = yes
 POINTING_DEVICE_ENABLE = yes
 
+CONSOLE_ENABLE = yes
+
 
 # ---- その他 ----
 RAW_ENABLE = yes

@@ -1,4 +1,21 @@
-/* rgblight_user.c */
+/* Copyright 2016-2017 Yang Liu
+ * Copyright (c) 2026 SpockMH
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+//* rgblight_user.c */
 #include "quantum.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -51,7 +68,15 @@ static bool     rgb_is_idle       = false;
         13,  9,27,28,29,     30, 31,      46     
 */
 // LEDインデックスマップ
-const uint8_t led_index[MATRIX_ROWS][MATRIX_COLS] = { 
+// led_index用の列数。物理キーはcol0〜5の6列のみで、col6はaz1uball仮想キーコードを
+// vial側のキーマップ配列に割り当てるためだけに追加された列であり、対応する物理キー・LEDは無い。
+// MATRIX_COLS(=7)をそのままled_index関連のループ境界に使うと、存在しないcol6のマスまで
+// 距離計算やSWIRL/CROSSエフェクトの対象になってしまう(そのマスのled_indexは配列外を指すか、
+// 意図せずled[0]やled[59]を誤って上書きしてしまう)。そのため専用の定数として分離し、
+// led_index関連の全ループ(このファイル内)で必ずこちらを使うこと。
+#define LED_MATRIX_COLS (MATRIX_COLS - 1)
+
+const uint8_t led_index[MATRIX_ROWS][LED_MATRIX_COLS] = { 
     { 17, 14, 10,  6,  3,  0 },  // Row 0 left 
     { 18, 15, 11,  7,  4,  1 },  // Row 1 left
     { 19, 16, 12,  8,  5,  2 },  // Row 2 left
@@ -90,7 +115,7 @@ static uint8_t last_col = 0;
 //   SPLASH_FIREWORK_GROW_WPM_LOW〜SPLASH_FIREWORK_GROW_WPM_HIGH      : SPLASH_FIREWORK_MAX_RADIUS→SPLASH_MAX_RADIUSへ線形に拡大
 //   SPLASH_FIREWORK_GROW_WPM_HIGH〜                                  : SPLASH_MAX_RADIUS固定(通常のクリック時スプラッシュと同じ大きさ)
 #define SPLASH_FIREWORK_GROW_WPM_LOW  70
-#define SPLASH_FIREWORK_GROW_WPM_HIGH 400
+#define SPLASH_FIREWORK_GROW_WPM_HIGH 300
 
 // Splash プール定数（数を変えるだけで同時発生数を調整可能）
 #define SPLASH_MAX_COUNT 10
@@ -119,13 +144,24 @@ static void sethsv_to_array(uint8_t hue, uint8_t sat, uint8_t val, rgb_led_t *ta
 }
 
 static inline uint8_t keyball_distance(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
-    if(r1 >= 4) { r1 -= 4; c1 = (5 - c1) + 6; }
-    if(r2 >= 4) { r2 -= 4; c2 = (5 - c2) + 6; }
-    int8_t dr = r1 - r2;
-    int8_t dc = c1 - c2;
+    if (r1 >= 4) { r1 -= 4; c1 = (5 - c1) + 8; }
+    if (r2 >= 4) { r2 -= 4; c2 = (5 - c2) + 8; }
+
+    int8_t dr = (int8_t)r1 - (int8_t)r2;
+    int8_t dc = (int8_t)c1 - (int8_t)c2;
+    
     if (dr < 0) dr = -dr;
     if (dc < 0) dc = -dc;
-    return dr * 5 + dc * 10;
+
+    // dr と dc の大小関係を特定
+    uint8_t max_d = (dr > dc) ? dr : dc;
+    uint8_t min_d = (dr > dc) ? dc : dr;
+
+    // 1偏差 = 10 のスケールで直線距離（三平方の定理）を近似計算
+    // Max + 0.375 * Min の整数演算（誤差最大約4%）
+    uint16_t dist = (uint16_t)max_d * 10 + ((uint16_t)min_d * 38 / 100);
+
+    return (dist > 255) ? 255 : (uint8_t)dist;
 }
 
 static void rgblight_value_reset(void) {
@@ -230,7 +266,7 @@ void rgblight_effect_swirl(void) {
     static uint8_t current_hue = 0;
     uint8_t i, j;
 
-    for (i = 0; i < MATRIX_COLS; i++) {
+    for (i = 0; i < LED_MATRIX_COLS; i++) {
         for (j = 0; j < MATRIX_ROWS; j++){
             hue = (8 * i + current_hue);
             sethsv_to_array(hue, 255, rgblight_config.val, &led[led_index[j][i]]);
@@ -246,7 +282,7 @@ void rgblight_effect_cross(void) {
     uint8_t i, j;
 
     for (i = 0; i < MATRIX_ROWS; i++) {
-        for (j = 0; j < MATRIX_COLS; j++) {
+        for (j = 0; j < LED_MATRIX_COLS; j++) {
             // row と col の和で奇数・偶数を判定
             if ((i + j + (i == 3 ? 1:0)) % 2 != 0) {
                 sethsv_to_array(current_hue, 255, rgblight_config.val, &led[led_index[i][j]]);
@@ -473,7 +509,7 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
         uint16_t cur_radius = splash_pool[s].radius;
 
         for (uint8_t r = 0; r < MATRIX_ROWS; r++) {
-            for (uint8_t c = 0; c < MATRIX_COLS; c++) {
+            for (uint8_t c = 0; c < LED_MATRIX_COLS; c++) {
                 uint8_t led_id = led_index[r][c];
                 if (led_id == 59) continue;
 
