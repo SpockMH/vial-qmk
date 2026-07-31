@@ -11,17 +11,27 @@ Keyball44の60個のWS2812 LED(左右分割・合計)を制御する独自RGBエ
 
 ## エフェクトモード
 
-`enum RGBLIGHT_EFFECT_MODE`で定義される4種類:
+`enum RGBLIGHT_EFFECT_MODE`で定義される6種類:
 
 | モード | 内容 |
 |---|---|
 | `RGBLIGHT_MODE_OFF` | 消灯 |
 | `RGBLIGHT_MODE_ICEWAVE` | 彩度が波打つように変化するアイドル演出(layer1で使用) |
 | `RGBLIGHT_MODE_STATIC` | 単色固定点灯(layer2で使用) |
-| `RGBLIGHT_MODE_MOUSEMOVE` | トラックボール操作に反応してキー周辺が光る(通常時に使用) |
+| `RGBLIGHT_MODE_MOUSEMOVE` | トラックボール操作に反応してキー周辺が光る(通常時に使用)。花火・スプラッシュエフェクトもこのモード上に重ねて描画される |
 | `RGBLIGHT_MODE_SCROLLMOVE` | スクロール操作時、行全体が光る(スクロールレイヤーで使用) |
+| `RGBLIGHT_MODE_SWIRL` | 列ごとに色相をずらした渦巻き状の演出 |
+| `RGBLIGHT_MODE_CROSS` | 行列の位置に応じて市松模様に2色を交互点灯させる演出 |
 
 モード切替は`keymap.c`の`layer_state_set_user()`から`rgblight_mode()`を呼ぶことで行われる。
+
+## led_index（物理キー位置→LED配列インデックスの対応表）
+
+`rgblight_user.c`内の`led_index[MATRIX_ROWS][LED_MATRIX_COLS]`は、物理キーの行列位置(row/col)から対応するLED配列(`led[RGBLED_NUM]`)のインデックスを引くための対応表。スプラッシュ/花火風エフェクトの距離計算(`rgblight_value()`)、`RGBLIGHT_MODE_SWIRL`、`RGBLIGHT_MODE_CROSS`がこれを参照する。LEDが存在しないマス(サムクラスタの一部など)には`59`(no-LEDセンチネル。距離計算では明示的に`continue`でスキップされる)が入っている。
+
+列数は`MATRIX_COLS`(=7)ではなく`LED_MATRIX_COLS`(=`MATRIX_COLS - 1`=6)。物理キーはcol0〜5の6列のみで、col6はaz1uball仮想キーコードをvialのキーマップ配列に割り当てるためだけに追加された列であり、対応する物理キー・LEDは存在しない。`led_index`関連の全ループ(このファイル内、上記3箇所)は必ず`LED_MATRIX_COLS`を使うこと。
+
+過去に`led_index`を`MATRIX_COLS`(7列)で宣言しつつ各行の初期化子を6個しか書いていなかったことがあり、C言語の仕様で足りない列(col6)が暗黙に`0`埋めされていた。この結果、本来存在しないcol6のマスがled0(row0,col5の実LED)と混線し、無関係なキー操作でled0が意図しないタイミングで光る不具合が発生していた。現在は配列サイズとループ境界を`LED_MATRIX_COLS`に統一することで、col6のマスがそもそも計算対象に入らないようにしてある。
 
 ## 左右同期の仕組み
 
@@ -31,18 +41,21 @@ Keyball44の60個のWS2812 LED(左右分割・合計)を制御する独自RGBエ
 
 ## スプラッシュ(波紋)エフェクト
 
-`rgblight_value()`にトリガーフラグを渡すと、押下されたキー位置を中心に波紋が広がるエフェクトが発生する。最大`SPLASH_MAX_COUNT`(10個)まで同時発生でき、リングバッファ方式で古いものから上書きされる。距離計算(`keyball_distance`)は左右分割キーボードの物理配置を考慮した独自メトリクスを使用。
+`rgblight_value()`の`splash_trig`引数に`true`を渡すと、押下されたキー位置を中心に波紋が広がるエフェクトが発生する。最大`SPLASH_MAX_COUNT`(10個)まで同時発生でき、リングバッファ方式で古いものから上書きされる。距離計算(`keyball_distance`)は左右分割キーボードの物理配置を考慮した独自メトリクスを使用。
 
-### splash_mode（強制スプラッシュモード）
+`splash_trig`は`lighting_tracking_trigger(scr, click)`経由で呼び出し側(M-MODEのクリック確定・AZ1UBALLのクリックなど)が明示的に`click=true`を渡した場合にのみ発生する。
 
-`SPL_TOG`キーで切り替えられる「強制スプラッシュモード」フラグ。本ディレクトリの`rgblight_user.c`内に`static bool splash_mode`として保持され(旧`keymap.c`のグローバル変数から移設)、外部からは以下の2関数経由でのみアクセスする:
+## 花火風スプラッシュ(高速タイピング時)
 
-- `rgblight_toggle_splash_mode()`: ON/OFF切り替え。`features/key_control/custom_keycodes.c`の`SPL_TOG`ケースから呼ばれる(`set_hue(get_hue() + 3)`と同じ「関数呼び出しで状態を操作する」パターン)
-- `rgblight_get_splash_mode()`: 現在の状態取得。`features/display/oled_user.c`のOLED表示(`SPL @`/`SPL =`)から呼ばれる
+高速タイピング中(`get_current_wpm() > 40`)は、押されたキーごとに、上記のスプラッシュ(波紋)エフェクトを流用した小さめの「花火風」バーストを発生させる。`splash_trig`によるクリック時のスプラッシュとは別の独立したロジックとして`rgblight_value()`内に実装されており、`splash_trig`が`true`の場合はそちらが優先される(同一フレームで両方が同時に発生することはない)。`update=true`(キー押下・レイヤー切替・M-MODE/AZ1UBALLクリックなど、実際の座標更新イベント)の場合にのみ発生し、`update=false`(`rgblight_effect_mousemove`/`rgblight_effect_scrollmove`からの毎フレームのアニメーション更新)は対象外(対象にすると毎フレーム発生し続けてしまうため)。
 
-`splash_mode`がONの間は、`rgblight_value()`内で`update=true`(キー押下・レイヤー切替・M-MODE/AZ1UBALLクリックなど、実際の座標更新イベント)の呼び出しに限り`splash_trig`が強制的に`true`へ昇格し、常にスプラッシュが発生する。`update=false`(`rgblight_effect_mousemove`/`rgblight_effect_scrollmove`からの毎フレームのアニメーション更新)には影響しない — もし影響させると毎フレームスプラッシュが発生し続けてしまうため、意図的に対象外としている。
+以前は同条件で花火専用の別実装(hanabi、塗りつぶし円のバースト)を用意していたが、色合いがスプラッシュほど良くならなかったため廃止し、代わりにスプラッシュの波紋ロジックそのものを流用しつつ「最大到達半径だけを小さくする」方式に変更した。`splash_state_t`に`firework`(花火風かどうか)と`max_radius`(そのスプラッシュ固有の最大到達半径。発火した瞬間の値で以後固定)を追加し、処理ループでは`SPLASH_MAX_RADIUS`の代わりに`splash_pool[s].max_radius`を参照する形に一般化してある。
 
-この設計により、`keymap.c`側の呼び出し(`lighting_tracking_trigger(false, false)`)は`splash_mode`の値を一切意識する必要がなく、実際にスプラッシュを発火するかどうかの判断はすべて`rgblight_user.c`側に閉じている。
+- **最大到達半径はWPMに応じて可変**(`splash_firework_radius_for_wpm()`、発火した瞬間のWPMで決定し、そのスプラッシュが消えるまで固定):
+  - WPM 40〜`SPLASH_FIREWORK_GROW_WPM_LOW`(70): `SPLASH_FIREWORK_MAX_RADIUS`固定の小さい花火
+  - WPM `SPLASH_FIREWORK_GROW_WPM_LOW`(70)〜`SPLASH_FIREWORK_GROW_WPM_HIGH`(100): `SPLASH_FIREWORK_MAX_RADIUS`→`SPLASH_MAX_RADIUS`へ線形に拡大
+  - WPM `SPLASH_FIREWORK_GROW_WPM_HIGH`(100)以上: `SPLASH_MAX_RADIUS`固定(通常のクリック時スプラッシュと同じ大きさ)
+- 波紋の色シフト・減衰の形自体(`WAVE_SOLID`/`WAVE_FADE`に相当する`SPLASH_FIREWORK_WAVE_SOLID`/`SPLASH_FIREWORK_WAVE_FADE`)は通常スプラッシュと同じ値にしてあるため、見た目のクオリティ(色合い)はそのままに、範囲の大きさだけがWPMに応じて変化する
 
 ## lighting_tracking（マウス移動→ライティング座標追跡）
 

@@ -57,7 +57,6 @@
     { "name": "LIGHT_VAI", "title": "Decrease mouse mode term", "shortName": "LIGHT\nDEC" },
     { "name": "LIGHT_VAD", "title": "Increase mouse mode term", "shortName": "LIGHT\nINC" },
     { "name": "HUE_UP", "title": "Increase hue", "shortName": "HUE\nUP" },
-    { "name": "SPL_TOG", "title": "Increase hue", "shortName": "SPL\nTOG" },
     { "name": "SELWORD_LEFT", "title": "Increase hue", "shortName": "SLWD\nL" },
     { "name": "SELWORD_RIGHT", "title": "Increase hue", "shortName": "SLWD\nR" },
     { "name": "SELLINE_UP", "title": "Increase hue", "shortName": "SLLN\nU" },

@@ -1,3 +1,25 @@
+/**
+ * Copyright (c) 2026 SpockMH
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACTText, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #include QMK_KEYBOARD_H
 #include "quantum.h"
 #include <lib/lib8tion/lib8tion.h>
@@ -66,6 +88,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 void keyboard_post_init_user(void) {
+  oled_status_sync_register();
   user_config_init();
   rgblight_init();
   lighting_tracking_init();
@@ -80,6 +103,7 @@ void matrix_scan_user(void) {
 
 void housekeeping_task_user(void) {
   rgblight_task();
+  oled_status_sync_task();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -92,8 +116,6 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record){
     rgblight_wake();
     lighting_tracking_set_position(record->event.key.row, record->event.key.col);
     lighting_tracking_trigger(false, false);
-
-    if (!process_user_virtual_keycode(keycode)) return false;
   }
 
   if (!process_cpi_x3(keycode, record)) return false;
@@ -158,14 +180,22 @@ layer_state_t layer_state_set_user(layer_state_t state)
             rgblight_mode(RGBLIGHT_MODE_STATIC);
             break;
 
-        case 4:
-            rgblight_mode(RGBLIGHT_MODE_SCROLLMOVE);
-            lighting_tracking_trigger(true, false);
+        case 3:
+            rgblight_mode(RGBLIGHT_MODE_SWIRL);
             break;
 
+        case 4:
+            rgblight_mode(RGBLIGHT_MODE_SCROLLMOVE);
+            lighting_tracking_refresh(true);
+            break;
+
+        case 5:
+            rgblight_mode(RGBLIGHT_MODE_CROSS);
+            break;
         default:
             rgblight_mode(RGBLIGHT_MODE_MOUSEMOVE);
-            lighting_tracking_trigger(false, false);
+            lighting_tracking_refresh(false);
+            lighting_tracking_set_position(5, 4);
             break;
     }
 

@@ -15,6 +15,7 @@ BACKLIGHT_ENABLE = no
 AUDIO_ENABLE = no
 
 SERIAL_DRIVER = vendor
+
 # WS2812_DRIVER = vendor   ← 削除（デフォルトに任せる）
 
 # Keyball44 is split keyboard.
@@ -36,8 +37,9 @@ RGB_MATRIX_DRIVER = ws2812
 
 SLEEP_LED_ENABLE = no
 
-OLED_ENABLE = no
-SRC += lib/oledkit/oledkit.c
+OLED_ENABLE = yes
+SPLIT_OLED_ENABLE = yes
+# SRC += lib/oledkit/oledkit.c
 
 SRC += lib/keyball/keyball.c
 

@@ -1,3 +1,25 @@
+/**
+ * Copyright (c) 2026 SpockMH
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACTText, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #include "lighting_tracking.h"
 #include "rgblight_user.h"
 #include "features/pointing/mouse_mode.h"
@@ -31,8 +53,21 @@ void lighting_tracking_set_position(uint8_t row, uint8_t col) {
     sync_data.key_col = col;
 }
 
+// sync_data.key_row/colを変換せず、そのままスレーブへ同期送信する。
+// (実際に押された物理キーの座標をそのまま使いたい場合に使う。
+//  keyball_distance()による距離ベースのリップル伝播で両手に自然に広がるため、
+//  変換は不要かつ変換すると開始座標がズレてしまう)
+static void sync_to_slave_raw(void) {
+    if (is_keyboard_master()) {
+        transaction_rpc_send(USER_SYNC_KEY_COUNTER, sizeof(sync_data), &sync_data);
+    }
+}
+
 // 右手側基準の座標をスレーブ(左手側)向けに変換して同期送信する。
-static void sync_to_slave(void) {
+// (継続的なマウス追従ライティング/レイヤー切替の再描画専用。
+//  この経路はスプラッシュの距離伝播を使わず、スレーブ側の物理出力範囲
+//  [led_index 0-3行]に直接ヒットさせる必要があるため変換が必須)
+static void sync_to_slave_converted(void) {
     sync_data.key_row = sync_data.key_row - LIGHTING_ROW_OFFSET;
     sync_data.key_col = LIGHTING_COL_MAX - sync_data.key_col;
     if (is_keyboard_master()) {
@@ -40,11 +75,23 @@ static void sync_to_slave(void) {
     }
 }
 
+// 実際に押された物理キー等の座標でライティングを発火する。
+// キー押下・M-MODEクリック・AZ1UBALLクリックから呼ぶこと(座標は変換しない)。
 void lighting_tracking_trigger(bool scr, bool click) {
     sync_data.scr   = scr;
     sync_data.click = click;
     rgblight_value(sync_data.key_row, sync_data.key_col, true, scr, click);
-    sync_to_slave();
+    sync_to_slave_raw();
+}
+
+// 現在の追従カーソル位置(右手基準)でライティングを再描画する。
+// マウス追従(lighting_tracking_update)とレイヤー切替時の再描画専用。
+// (旧 keymap.c の call_rgblight を移設)
+void lighting_tracking_refresh(bool scr) {
+    sync_data.scr   = scr;
+    sync_data.click = false;
+    rgblight_value(sync_data.key_row, sync_data.key_col, true, scr, false);
+    sync_to_slave_converted();
 }
 
 void lighting_tracking_rpc_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
@@ -97,6 +144,6 @@ void lighting_tracking_update(report_mouse_t *mouse_report, bool layerscr) {
     // キー座標が変更となっていた場合にライティング情報変更及び同期処理
     if (moved) {
         clear_m_buf();
-        lighting_tracking_trigger(layerscr, false);
+        lighting_tracking_refresh(layerscr);
     }
 }

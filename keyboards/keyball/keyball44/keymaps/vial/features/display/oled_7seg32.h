@@ -19,18 +19,30 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
- 
-bool oled_task_user_func(void);
-void oled_update(void);
 
-// 右手OLED状態同期用のRPCハンドラを登録する。
-// keymap.c の keyboard_post_init_user() から無条件で呼ぶこと
-// (左右どちらがマスターになっても受信側として機能する必要があるため)。
-void oled_status_sync_register(void);
+#pragma once
 
-// マスター側で状態変化を検知し、必要ならRPC送信する。
-// keymap.c の housekeeping_task_user() から無条件で呼ぶこと。
-// OLEDハードウェアの有無に関係なく左右どちらのMCUでも確実に実行される
-// housekeeping_task_user() 経由にすることで、OLEDを持たない側がマスターに
-// なった場合でも同期が止まらないようにしている。
-void oled_status_sync_task(void);
+#include "quantum.h"
+#include "oled_driver.h"
+
+#define OLED_7SEG32_WIDTH  32
+#define OLED_7SEG32_HEIGHT 32
+#define OLED_7SEG32_BYTES  128 // 32 * (32 / 8)
+
+/**
+ * 指定した座標(x, y)に、7セグメント風の文字を描画します。
+ * 
+ * @param x 表示位置のX座標 (0 ～ OLED_WIDTH - 32)
+ * @param y 表示位置のY座標 (0 ～ OLED_HEIGHT - 32)
+ * @param c 描画する文字 ('0'～'9', 'A', 'b', 'C', 'd', 'E', 'F', ' ', '-')
+ */
+void oled_write_7seg32_char(uint8_t x, uint8_t y, char c);
+
+/**
+ * 指定した座標(x, y)に、1桁の数値(0～9)を描画します。
+ * 
+ * @param x 表示位置のX座標
+ * @param y 表示位置のY座標
+ * @param num 表示する数値 (0～9)
+ */
+void oled_write_7seg32_num(uint8_t x, uint8_t y, uint8_t num);

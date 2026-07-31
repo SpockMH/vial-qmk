@@ -1,6 +1,8 @@
 /*
 Copyright 2022 @Yowkees
 Copyright 2022 MURAOKA Taro (aka KoRoN, @kaoriya)
+Copyright (c) 2026 SpockMH
+
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -204,7 +206,6 @@ void pointing_device_driver_init(void) {
     }
 #    endif
     keyball.this_have_ball = pmw3360_init();
-    debug_pmw3360_init_result = keyball.this_have_ball; // [デバッグ用]
 #    ifdef AZ1UBALL_ENABLE
     pmw3360_physically_present = keyball.this_have_ball; // 右手は従来通り連動させる
 #    endif

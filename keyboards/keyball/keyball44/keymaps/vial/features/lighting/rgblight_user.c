@@ -1,4 +1,21 @@
-/* rgblight_user.c */
+/* Copyright 2016-2017 Yang Liu
+ * Copyright (c) 2026 SpockMH
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+//* rgblight_user.c */
 #include "quantum.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -23,12 +40,43 @@ static rgb_led_t led[RGBLED_NUM];
 static uint32_t last_rgb_activity = 0;
 static bool     rgb_is_idle       = false;
 
-// スプラッシュ演出の強制ON/OFFフラグ(SPL_TOGキーでトグル)。
-// (旧 keymap.c の splash_mode を移設)
-static bool splash_mode = false;
 
+/*  
+//Keyball44配置図
+    L00,L01,L02,L03,L04,L05,    R05,R04,R03,R02,R01,R00, \
+    L10,L11,L12,L13,L14,L15,    R15,R14,R13,R12,R11,R10, \
+    L20,L21,L22,L23,L24,L25,    R25,R24,R23,R22,R21,R20, \
+        L31,L32,L33,L34,L35,    R35,R34,        R31      \
+    ) 
+    { 
+        {   L00,   L01,   L02,   L03,   L04,   L05 }, \
+        {   L10,   L11,   L12,   L13,   L14,   L15 }, \
+        {   L20,   L21,   L22,   L23,   L24,   L25 }, \
+        { KC_NO,   L31,   L32,   L33,   L34,   L35 }, \
+        {   R00,   R01,   R02,   R03,   R04,   R05 }, \
+        {   R10,   R11,   R12,   R13,   R14,   R15 }, \
+        {   R20,   R21,   R22,   R23,   R24,   R25 }, \
+        { KC_NO,   R31, KC_NO, KC_NO,   R34,   R35 }, \
+    }
+*/
+
+/*
+//Keyball44 LED No.(親指は下向きを採用)
+    17, 14, 10, 6, 3, 0,     56, 53, 50, 47, 43, 40, 
+    18, 15, 11, 7, 4, 1,     57, 54, 51, 48, 44, 41, 
+    19, 16, 12, 8, 5, 2,     58, 55, 52, 49, 45, 42, 
+        13,  9,27,28,29,     30, 31,      46     
+*/
 // LEDインデックスマップ
-const uint8_t led_index[MATRIX_ROWS][MATRIX_COLS] = { 
+// led_index用の列数。物理キーはcol0〜5の6列のみで、col6はaz1uball仮想キーコードを
+// vial側のキーマップ配列に割り当てるためだけに追加された列であり、対応する物理キー・LEDは無い。
+// MATRIX_COLS(=7)をそのままled_index関連のループ境界に使うと、存在しないcol6のマスまで
+// 距離計算やSWIRL/CROSSエフェクトの対象になってしまう(そのマスのled_indexは配列外を指すか、
+// 意図せずled[0]やled[59]を誤って上書きしてしまう)。そのため専用の定数として分離し、
+// led_index関連の全ループ(このファイル内)で必ずこちらを使うこと。
+#define LED_MATRIX_COLS (MATRIX_COLS - 1)
+
+const uint8_t led_index[MATRIX_ROWS][LED_MATRIX_COLS] = { 
     { 17, 14, 10,  6,  3,  0 },  // Row 0 left 
     { 18, 15, 11,  7,  4,  1 },  // Row 1 left
     { 19, 16, 12,  8,  5,  2 },  // Row 2 left
@@ -54,6 +102,21 @@ static uint8_t last_col = 0;
 #define SPLASH_LEAD_OFFSET 10
 #define SPLASH_TIP_FALLOFF 15
 
+// 花火風(タイピング時)の小さいスプラッシュ用パラメータ。
+// MAX_RADIUSはWPMに応じて可変(下記splash_firework_radius_for_wpm参照)。
+// WAVE_SOLID/WAVE_FADEは通常スプラッシュと同じ値にしてあり、実質的には
+// MAX_RADIUS(広がる範囲の大きさ)だけが花火/通常で異なる形になる。
+#define SPLASH_FIREWORK_MAX_RADIUS (DIST_SCALE * 1.5) // 直径2マス程度の局所的な広がりを狙った目安値(調整可)
+#define SPLASH_FIREWORK_WAVE_SOLID 100
+#define SPLASH_FIREWORK_WAVE_FADE  150
+
+// WPMに応じて花火スプラッシュの最大到達半径を変化させる閾値。
+//   〜SPLASH_FIREWORK_GROW_WPM_LOW                                   : SPLASH_FIREWORK_MAX_RADIUS固定(小さい花火)
+//   SPLASH_FIREWORK_GROW_WPM_LOW〜SPLASH_FIREWORK_GROW_WPM_HIGH      : SPLASH_FIREWORK_MAX_RADIUS→SPLASH_MAX_RADIUSへ線形に拡大
+//   SPLASH_FIREWORK_GROW_WPM_HIGH〜                                  : SPLASH_MAX_RADIUS固定(通常のクリック時スプラッシュと同じ大きさ)
+#define SPLASH_FIREWORK_GROW_WPM_LOW  70
+#define SPLASH_FIREWORK_GROW_WPM_HIGH 300
+
 // Splash プール定数（数を変えるだけで同時発生数を調整可能）
 #define SPLASH_MAX_COUNT 10
 
@@ -62,7 +125,9 @@ typedef struct {
     uint8_t  center_row;
     uint8_t  center_col;
     uint8_t  start_hue;
-    uint16_t radius;     // 各スプラッシュが独自の半径を持つ（uint16_t: SPLASH_MAX_RADIUS=250 を超えられるよう）
+    uint16_t radius;      // 現在の半径(毎フレームSPLASH_SPEEDずつ増加していく値)
+    uint16_t max_radius;  // このスプラッシュの最大到達半径(発火した瞬間のWPMに応じて決定し、以後は固定)
+    bool     firework;    // true: タイピング時の小さい「花火」風スプラッシュ(SPLASH_FIREWORK_WAVE_*を使う)
 } splash_state_t;
 
 static splash_state_t splash_pool[SPLASH_MAX_COUNT];
@@ -79,13 +144,24 @@ static void sethsv_to_array(uint8_t hue, uint8_t sat, uint8_t val, rgb_led_t *ta
 }
 
 static inline uint8_t keyball_distance(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
-    if(r1 >= 4) { r1 -= 4; c1 = (5 - c1) + 6; }
-    if(r2 >= 4) { r2 -= 4; c2 = (5 - c2) + 6; }
-    int8_t dr = r1 - r2;
-    int8_t dc = c1 - c2;
+    if (r1 >= 4) { r1 -= 4; c1 = (5 - c1) + 8; }
+    if (r2 >= 4) { r2 -= 4; c2 = (5 - c2) + 8; }
+
+    int8_t dr = (int8_t)r1 - (int8_t)r2;
+    int8_t dc = (int8_t)c1 - (int8_t)c2;
+    
     if (dr < 0) dr = -dr;
     if (dc < 0) dc = -dc;
-    return dr * 5 + dc * 10;
+
+    // dr と dc の大小関係を特定
+    uint8_t max_d = (dr > dc) ? dr : dc;
+    uint8_t min_d = (dr > dc) ? dc : dr;
+
+    // 1偏差 = 10 のスケールで直線距離（三平方の定理）を近似計算
+    // Max + 0.375 * Min の整数演算（誤差最大約4%）
+    uint16_t dist = (uint16_t)max_d * 10 + ((uint16_t)min_d * 38 / 100);
+
+    return (dist > 255) ? 255 : (uint8_t)dist;
 }
 
 static void rgblight_value_reset(void) {
@@ -185,6 +261,42 @@ static void rgblight_effect_scrollmove(void) {
     rgblight_value(0, 0, false, true, false);
 }
 
+void rgblight_effect_swirl(void) {
+    uint8_t hue;
+    static uint8_t current_hue = 0;
+    uint8_t i, j;
+
+    for (i = 0; i < LED_MATRIX_COLS; i++) {
+        for (j = 0; j < MATRIX_ROWS; j++){
+            hue = (8 * i + current_hue);
+            sethsv_to_array(hue, 255, rgblight_config.val, &led[led_index[j][i]]);
+        }
+    }
+    rgblight_flush();
+    current_hue--;
+}
+
+void rgblight_effect_cross(void) {
+
+    static uint8_t current_hue = 0;
+    uint8_t i, j;
+
+    for (i = 0; i < MATRIX_ROWS; i++) {
+        for (j = 0; j < LED_MATRIX_COLS; j++) {
+            // row と col の和で奇数・偶数を判定
+            if ((i + j + (i == 3 ? 1:0)) % 2 != 0) {
+                sethsv_to_array(current_hue, 255, rgblight_config.val, &led[led_index[i][j]]);
+            } else {
+                sethsv_to_array(current_hue + 128, 255, rgblight_config.val, &led[led_index[i][j]]);
+            }
+        }
+    }
+    
+    underled(true);
+    rgblight_flush();
+    current_hue--;
+}
+
 /* --- 外部公開API関数 --- */
 void rgblight_init(void) {
     lighting_register_rpc_handlers();
@@ -274,14 +386,6 @@ void set_hue(uint8_t value){
     }
 }
 
-bool rgblight_get_splash_mode(void) {
-    return splash_mode;
-}
-
-// SPL_TOGキーから呼ばれる。スプラッシュ演出の強制ON/OFFを切り替える。
-void rgblight_toggle_splash_mode(void) {
-    splash_mode = !splash_mode;
-}
 
 void rgblight_update_sync(rgblight_simple_config_t *master_config) {
     bool is_changed = false;
@@ -337,34 +441,67 @@ static uint8_t splash_alloc(void) {
     return slot;
 }
 
+// WPMに応じて花火スプラッシュの最大到達半径を決める。
+// SPLASH_FIREWORK_GROW_WPM_LOW〜HIGHの間は線形補間し、範囲外は両端の値で固定する。
+static uint16_t splash_firework_radius_for_wpm(uint8_t wpm) {
+    if (wpm <= SPLASH_FIREWORK_GROW_WPM_LOW) {
+        return SPLASH_FIREWORK_MAX_RADIUS;
+    }
+    if (wpm >= SPLASH_FIREWORK_GROW_WPM_HIGH) {
+        return SPLASH_MAX_RADIUS;
+    }
+    uint32_t span  = SPLASH_FIREWORK_GROW_WPM_HIGH - SPLASH_FIREWORK_GROW_WPM_LOW;
+    uint32_t pos   = wpm - SPLASH_FIREWORK_GROW_WPM_LOW;
+    uint32_t delta = (uint32_t)(SPLASH_MAX_RADIUS - SPLASH_FIREWORK_MAX_RADIUS) * pos / span;
+    return (uint16_t)(SPLASH_FIREWORK_MAX_RADIUS + delta);
+}
+
 // トラックボール移動イベント
 void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash_trig) {
-    // スプラッシュモードON時は、実際のキー座標更新イベント(update=true。
-    // キー押下・レイヤー切替・M-MODE/AZ1UBALLクリックなど)に限り、
-    // splash_trigを強制的にtrueへ昇格させる。
-    // update=falseはrgblight_effect_mousemove/scrollmoveからの毎フレーム
-    // アニメーション更新呼び出しなので、ここでは対象にしない
-    // (対象にすると毎フレームスプラッシュが発生し続けてしまう)。
-    if (update && splash_mode) splash_trig = true;
-
     uint8_t last_index = led_index[last_row][last_col];
 
-    // ── 新規スプラッシュの登録 ──────────────────────────────────────
+    // splash_trig(M-MODE/AZ1UBALLクリック時の明示的なスプラッシュ)を優先し、
+    // それが無い場合のみ高速タイピング中(WPM>40)の花火風スプラッシュを登録する
+    // (実際のキー座標更新イベント=update=trueに限る。update=falseは
+    //  rgblight_effect_mousemove/scrollmoveからの毎フレームアニメーション更新
+    //  呼び出しなので対象にしない。対象にすると毎フレーム発火し続けてしまう)。
+    //
+    // 花火風の最大到達半径は、発火した瞬間のWPMに応じて
+    // splash_firework_radius_for_wpm()で決定し、そのスプラッシュが消えるまで固定する
+    // (WPM40〜70: 小さい花火のまま固定。70〜100: 通常スプラッシュのサイズへ線形に拡大。
+    //  100以上: 通常のクリック時スプラッシュと同じ大きさ)。
     if (splash_trig) {
-        uint8_t slot          = splash_alloc();
+        uint8_t slot                 = splash_alloc();
         splash_pool[slot].active     = true;
         splash_pool[slot].center_row = row;
         splash_pool[slot].center_col = col;
         splash_pool[slot].start_hue  = hue_value[last_index];
         splash_pool[slot].radius     = 0;
+        splash_pool[slot].firework   = false;
+        splash_pool[slot].max_radius = SPLASH_MAX_RADIUS;
+    } else if (update && get_current_wpm() > 40) {
+        uint8_t slot                 = splash_alloc();
+        splash_pool[slot].active     = true;
+        splash_pool[slot].center_row = row;
+        splash_pool[slot].center_col = col;
+        splash_pool[slot].start_hue  = hue_value[last_index];
+        splash_pool[slot].radius     = 0;
+        splash_pool[slot].firework   = true;
+        splash_pool[slot].max_radius = splash_firework_radius_for_wpm(get_current_wpm());
     }
 
     // ── アクティブ全スプラッシュを処理（配列順 = 後勝ち上書き）──────
     for (uint8_t s = 0; s < SPLASH_MAX_COUNT; s++) {
         if (!splash_pool[s].active) continue;
 
+        // 最大到達半径は発火時に決定済みの値をそのまま使う(毎フレーム再計算しない)
+        uint16_t max_radius = splash_pool[s].max_radius;
+        // firework(タイピング発火)の場合は花火風のWAVE_SOLID/WAVE_FADEを使う
+        uint16_t wave_solid  = splash_pool[s].firework ? SPLASH_FIREWORK_WAVE_SOLID  : WAVE_SOLID;
+        uint16_t wave_fade   = splash_pool[s].firework ? SPLASH_FIREWORK_WAVE_FADE   : WAVE_FADE;
+
         splash_pool[s].radius += SPLASH_SPEED;
-        if (splash_pool[s].radius > SPLASH_MAX_RADIUS) {
+        if (splash_pool[s].radius > max_radius) {
             splash_pool[s].active = false;
             continue;
         }
@@ -372,7 +509,7 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
         uint16_t cur_radius = splash_pool[s].radius;
 
         for (uint8_t r = 0; r < MATRIX_ROWS; r++) {
-            for (uint8_t c = 0; c < MATRIX_COLS; c++) {
+            for (uint8_t c = 0; c < LED_MATRIX_COLS; c++) {
                 uint8_t led_id = led_index[r][c];
                 if (led_id == 59) continue;
 
@@ -387,16 +524,16 @@ void rgblight_value(uint8_t row, uint8_t col, bool update, bool scr, bool splash
                     continue;
                 } else if (diff >= 0 && diff <= DIST_SCALE) {
                     v -= diff * SPLASH_TIP_FALLOFF;
-                } else if (diff < 0 && diff >= -WAVE_SOLID) {
+                } else if (diff < 0 && diff >= -wave_solid) {
                     h -= diff >> 1;
-                } else if (diff < -WAVE_SOLID && diff > -WAVE_FADE) {
-                    uint8_t x = (WAVE_FADE - WAVE_SOLID) - (WAVE_FADE - diff);
+                } else if (diff < -wave_solid && diff > -wave_fade) {
+                    uint8_t x = (wave_fade - wave_solid) - (wave_fade - diff);
                     x = ((uint16_t)x * x) >> 4;
                     if (x > 150) x = 150;
                     v -= (150 - x);
                     h -= diff >> 1;
                 } else {
-                    // フェードアウト末尾（diff <= -WAVE_FADE）：完全消灯域も書き込まない
+                    // フェードアウト末尾（diff <= -wave_fade）：完全消灯域も書き込まない
                     continue;
                 }
                 // 影響圏内のみ後勝ちで上書き
@@ -442,6 +579,8 @@ void rgblight_task(void) {
             case RGBLIGHT_MODE_ICEWAVE:    interval_time = 16; break;
             case RGBLIGHT_MODE_MOUSEMOVE:  interval_time = 8;  break;
             case RGBLIGHT_MODE_STATIC:     interval_time = 50; break;
+            case RGBLIGHT_MODE_SWIRL:      interval_time = 16; break;
+            case RGBLIGHT_MODE_CROSS:      interval_time = 32; break;
         }
 
         if (timer_elapsed(effect_timer) >= interval_time) {
@@ -452,6 +591,8 @@ void rgblight_task(void) {
                 case RGBLIGHT_MODE_ICEWAVE:    rgblight_effect_icewave();    break;
                 case RGBLIGHT_MODE_MOUSEMOVE:  rgblight_effect_mousemove();  break;
                 case RGBLIGHT_MODE_SCROLLMOVE: rgblight_effect_scrollmove(); break;
+                case RGBLIGHT_MODE_SWIRL:      rgblight_effect_swirl();      break;
+                case RGBLIGHT_MODE_CROSS:      rgblight_effect_cross();      break;
             }
         }
     }
@@ -462,4 +603,3 @@ void rgblight_task(void) {
         rgb_is_idle = true;
     }
 }
-

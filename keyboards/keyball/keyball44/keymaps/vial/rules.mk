@@ -25,6 +25,8 @@ VIALRGB_ENABLE = no
 OLED_ENABLE = yes
 POINTING_DEVICE_ENABLE = yes
 
+CONSOLE_ENABLE = yes
+
 
 # ---- その他 ----
 RAW_ENABLE = yes
@@ -51,6 +53,7 @@ SRC += features/key_control/select_extend.c
 SRC += features/key_control/utils.c
 # display/ : OLED表示
 SRC += features/display/oled_user.c
-SRC += features/display/oled_7seg.c
+SRC += features/display/oled_7seg32.c
+SRC += features/display/oled_7seg16.c
 # config/ : EEPROM永続化
 SRC += features/config/eeconfig_user.c
